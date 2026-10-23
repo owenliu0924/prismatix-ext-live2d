@@ -7,6 +7,7 @@
   "author": {
     "name": "Owen Liu"
   },
+  "license": "MIT",
   "repository": "https://github.com/owenliu0924/prismatix-ext-live2d",
   "keywords": [
     "live2d",

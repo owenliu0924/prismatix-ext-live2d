@@ -15,7 +15,7 @@ the main package `owenliu0924-live2d-cubism-<version>.pxext` and the
 lists which platforms it has). Keep them in one folder, then in your project:
 
 ```sh
-prismatix extension add ./owenliu0924-live2d-cubism-0.2.0.pxext --allow-native
+prismatix extension add ./owenliu0924-live2d-cubism-0.2.1.pxext --allow-native
 ```
 
 To build for Android as well, add `--platform win32-x64,android-arm64` (list
@@ -87,6 +87,8 @@ cannot change any files.
 - Web and iOS builds.
 
 ## License
+
+This extension is MIT licensed (see [LICENSE](LICENSE)).
 
 Cubism Core, the Cubism SDK and Live2D models are licensed by Live2D Inc. and
 the models' authors. Read

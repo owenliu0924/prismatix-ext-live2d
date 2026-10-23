@@ -173,11 +173,11 @@ extension and one native pack per platform whose library you built.
    prismatix extension pack live2d-cubism --owner owenliu0924 --signing-key ~/keys/owen-native.pem
    ```
 
-   This writes `dist/extensions/owenliu0924-live2d-cubism-0.2.0.pxext` and
-   `...-0.2.0-native-<platform>.pxext` for each platform. Core is never in a
+   This writes `dist/extensions/owenliu0924-live2d-cubism-0.2.1.pxext` and
+   `...-0.2.1-native-<platform>.pxext` for each platform. Core is never in a
    package: the manifest only names it, per platform, with a hint that says
    where it is in the SDK. `pxext.json` (in `extension/`) holds the package
-   metadata; it names no license yet, so pack warns (`PXEXTPKG2003`).
+   metadata, including its license (MIT).
 5. Attach all the `.pxext` files to a GitHub release. Users install with
    `prismatix extension add <url or file> --allow-native` (a URL needs
    `--sha256`; the native packs are looked up beside the main package).
@@ -246,7 +246,8 @@ reads `frame.update` itself and accepts both payload shapes.
 
 ## Licensing notes
 
-There is no LICENSE file yet; add one before anyone else uses this. The engine
+This extension is MIT licensed (`LICENSE`, also copied into `extension/` so it
+ships in the package). The engine
 (and the vendored `PxPluginAbi.h`) is MIT. This repository contains no Live2D
 code or data: the
 Core prototypes in `native/cubism_core_api.h` are written out here as
