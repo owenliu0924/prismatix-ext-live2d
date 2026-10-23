@@ -5,6 +5,7 @@ import {createPrismatiXContext, defineCommand} from "@prismatix/runtime";
 import {createPrismatiXNative} from "@prismatix/runtime/native";
 import {createPrismatiXRaw} from "@prismatix/runtime/raw";
 
+import {frameDelta} from "./src/frame.ts";
 import {Live2DScene, type ModelSpec, type SceneState} from "./src/scene.ts";
 
 const ctx = createPrismatiXContext();
@@ -75,8 +76,10 @@ const live2d = new Live2DScene({
   phase: "after-stage",
 });
 
-ctx.frame.onUpdate((deltaSeconds) => {
-  live2d.update(deltaSeconds, scene.get());
+// Not ctx.frame.onUpdate: with the engine at ae74e2b it always reports 0 seconds
+// (src/frame.ts), so motions, blinking and breathing would never move.
+ctx.events.on("frame.update", (payload) => {
+  live2d.update(frameDelta(payload), scene.get());
 });
 
 ctx.events.on("engine.shutdown", () => {

@@ -85,8 +85,7 @@
           "type": "string",
           "displayName": "model",
           "description": "Project path of the .model3.json; its .moc3, textures, motions and expressions sit beside it.",
-          "required": true,
-          "resourceFilter": "model3.json"
+          "required": true
         },
         {
           "name": "x",

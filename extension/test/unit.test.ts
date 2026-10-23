@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 
+import {frameDelta} from "../src/frame.ts";
 import {parseModel3, resolvePath} from "../src/model3.ts";
 import {Blinker, evaluateCurve, MotionPlayer, parseExpression, parseMotion, ExpressionPlayer} from "../src/motion.ts";
 import {ParameterBank} from "../src/parameters.ts";
@@ -401,4 +402,13 @@ test("dispose destroys every mesh", () => {
   assert.ok(raw.meshes.size >= 2);
   renderer.dispose();
   assert.equal(raw.meshes.size, 0);
+});
+
+test("frame.update's delta is read from the documented object and from the array the Player sends", () => {
+  assert.equal(frameDelta({delta: "0.25"}), 0.25);
+  assert.equal(frameDelta(["delta", "0.016299"]), 0.016299);
+  assert.equal(frameDelta(["delta", "0.000000"]), 0);
+  assert.equal(frameDelta({delta: "nonsense"}), 0);
+  assert.equal(frameDelta(null), 0);
+  assert.equal(frameDelta(["other", "1"]), 0);
 });
