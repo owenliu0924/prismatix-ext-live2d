@@ -1,0 +1,206 @@
+name: CI
+
+# Every push and pull request: tests, a type-check against the engine's SDK, a
+# native build for each platform, and a signed .pxext package.
+# A tag like v0.1.0 also creates the GitHub release (as a draft, see RELEASE_DRAFT).
+# The release needs the repository secret PRISMATIX_SIGNING_KEY: the PEM written by
+# `prismatix extension keygen`. See the README, "Releasing a .pxext".
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+env:
+  # The engine the extension is built and tested against. @prismatix/cli is not
+  # on npm yet, so CI builds it from this commit; bump it deliberately.
+  ENGINE_REPOSITORY: PrisX/PrismatiXEngine
+  ENGINE_REF: 2534281ad1d404630358d6004fc1b705bc1bcaa6
+  # A draft release is reviewed and published by hand.
+  RELEASE_DRAFT: "true"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the bridge, the plugin and the mock Core, run the tests
+        run: tools/test.sh
+
+  engine-checks:
+    name: type-check and validate against the engine
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ENGINE_REPOSITORY }}
+          ref: ${{ env.ENGINE_REF }}
+          path: engine
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable pnpm
+      - name: Build the engine's SDK and CLI
+        run: tools/build-engine-cli.sh engine
+      - name: Type-check against the SDK
+        run: |
+          ln -s ../engine extension/.engine
+          engine/node_modules/.bin/tsc -p extension/tsconfig.check.json
+
+  native:
+    name: native (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, platform: win32-x64, flags: ""}
+          - {os: ubuntu-22.04, platform: linux-x64, flags: ""}
+          - {os: macos-latest, platform: darwin-arm64, flags: "-DCMAKE_OSX_ARCHITECTURES=arm64"}
+          # Built on the Apple Silicon runner; never run in CI.
+          - {os: macos-latest, platform: darwin-x64, flags: "-DCMAKE_OSX_ARCHITECTURES=x86_64"}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the plugin
+        run: |
+          cmake -S native -B build -DCMAKE_BUILD_TYPE=Release -DPX_PLATFORM=${{ matrix.platform }} ${{ matrix.flags }}
+          cmake --build build --config Release --target px_live2d
+      - run: ls -l extension/native/${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: extension/native/${{ matrix.platform }}
+          if-no-files-found: error
+
+  package:
+    name: package (.pxext)
+    needs: [test, engine-checks, native]
+    runs-on: ubuntu-22.04
+    outputs:
+      signed: ${{ steps.key.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ENGINE_REPOSITORY }}
+          ref: ${{ env.ENGINE_REF }}
+          path: engine
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable pnpm
+      - name: Build the engine's SDK and CLI
+        run: tools/build-engine-cli.sh engine
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native-artifacts
+      - name: Put every platform's library where pack looks for it
+        run: |
+          for folder in native-artifacts/native-*; do
+            platform="${folder##*/native-}"
+            mkdir -p "extension/native/$platform"
+            cp -r "$folder"/. "extension/native/$platform/"
+          done
+          find extension/native -type f | sort
+      - name: The tag must match the extension's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(node -p "require('./extension/live2d-cubism.pxextension').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the manifest version $version"
+            exit 1
+          fi
+      - name: Signing key
+        id: key
+        env:
+          SIGNING_KEY: ${{ secrets.PRISMATIX_SIGNING_KEY }}
+        run: |
+          key="$RUNNER_TEMP/signing.pem"
+          if [ -n "$SIGNING_KEY" ]; then
+            (umask 077 && printf '%s\n' "$SIGNING_KEY" > "$key")
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error::a release needs the repository secret PRISMATIX_SIGNING_KEY (the PEM from 'prismatix extension keygen')"
+            exit 1
+          else
+            # Not a release: a throwaway key proves the packaging works. Users should never see this package.
+            node engine/packages/cli/dist/src/cli.js extension keygen "$key" > /dev/null
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no PRISMATIX_SIGNING_KEY secret, so this package is signed with a throwaway key"
+          fi
+          echo "path=$key" >> "$GITHUB_OUTPUT"
+      - name: Validate, pack, and install into a second project
+        run: tools/package.sh engine "${{ steps.key.outputs.path }}" release
+      - name: Checksums
+        run: cd release && sha256sum *.pxext | tee SHA256SUMS.txt
+      - name: Remove the key
+        if: always()
+        run: rm -f "${{ steps.key.outputs.path }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pxext-${{ steps.key.outputs.signed == 'true' && 'signed' || 'unsigned-throwaway-key' }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v') && needs.package.outputs.signed == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pxext-signed
+          path: release
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          main="owenliu0924-live2d-cubism-$version.pxext"
+          sha="$(sha256sum "release/$main" | cut -d' ' -f1)"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          cat > notes.md <<NOTES
+          Live2D (Cubism) for PrismatiX $version.
+
+          **Install** (needs a PrismatiXEngine with native ABI 1.1; the package for your platform is looked up beside the main file):
+
+          \`\`\`sh
+          prismatix extension add $base/$main --sha256 $sha --allow-native
+          \`\`\`
+
+          **This package contains native code** that runs inside the game process, and **does not contain Live2D's Cubism Core**: download the Cubism SDK for Native from Live2D (read its license) and put the Core library beside the plugin, or pass its path with \`live2d.core\`.
+
+          Native packs are built for Windows, Linux and macOS (Intel and Apple Silicon). CI runs the Linux and Apple Silicon builds against a mock Core; the Windows and Intel macOS builds are compiled but never run. Nothing here has run in a real Player or against a real model yet. See the README.
+
+          SHA-256 of every file is in \`SHA256SUMS.txt\`.
+          NOTES
+          draft=()
+          if [ "$RELEASE_DRAFT" = "true" ]; then draft=(--draft); fi
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" --title "Live2D (Cubism) $version" \
+            --notes-file notes.md --verify-tag "${draft[@]}"

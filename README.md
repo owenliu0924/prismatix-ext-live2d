@@ -111,7 +111,26 @@ and show up in Studio's command picker like any extension command.
 
 ## Releasing a `.pxext`
 
-`prismatix extension pack` makes what users install: one `.pxext` for the
+**Automatically.** `.github/workflows/ci.yml` builds the plugin on Windows,
+Linux and macOS (Intel and Apple Silicon), packs and signs everything with the
+engine's CLI (built from the engine commit pinned in `ENGINE_REF`, because the
+CLI is not on npm), installs the result into a second project as a check, and
+for a tag creates the GitHub release. Once:
+
+1. `prismatix extension keygen ~/keys/owen-native.pem`, and keep that file safe:
+   users who accepted this key are asked again if it ever changes.
+2. In the repository's Settings, Secrets and variables, Actions, add a secret
+   `PRISMATIX_SIGNING_KEY` holding the whole PEM.
+
+Then for every release: raise `version` in `extension/live2d-cubism.pxextension`
+(and `extension/pxext.json` is read from it), commit, and
+`git tag v<version> && git push origin v<version>`. The tag must equal the
+manifest version or the run stops. The release is created as a **draft** (set
+`RELEASE_DRAFT` to `"false"` in the workflow to publish at once): look it over,
+then publish. A tag without the secret fails on purpose; other runs without it
+sign with a throwaway key and never publish.
+
+**By hand.** `prismatix extension pack` makes what users install: one `.pxext` for the
 extension and one native pack per platform whose library you built.
 
 1. On each OS, build the plugin (`cmake -S native -B build && cmake --build build`);

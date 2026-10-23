@@ -49,8 +49,9 @@ or version check, where the CLI says to put it).
 `extension pack` signs each platform's library into the main package, so all
 platforms' libraries must be in `extension/native/<platform>/` when it runs;
 a missing one is left out. Building on Windows, macOS and Linux runners and
-packing once needs a CI step that gathers the artifacts, and the CLI is not on
-npm, so that step needs an engine checkout. *Fix idea:* `extension pack
+packing once needs a CI step that gathers the artifacts (this repository's
+`ci.yml` does), and the CLI is not on npm, so that step checks out and builds
+the engine at a pinned commit. *Fix idea:* `extension pack
 --add-platform <pack>` to merge a per-OS build into an existing package, and
 publish the CLI.
 

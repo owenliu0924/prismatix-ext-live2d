@@ -8,6 +8,10 @@ project(px_live2d C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
+if(MSVC)
+    # No dependency on the Visual C++ redistributable for a plugin loaded into someone else's process.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 # The folder that holds Engine/Native/PxPluginAbi.h. Defaults to the copy in
 # vendor/ (see vendor/NOTICE.md); point it at <engine>/PrismatiXEngine to build
@@ -17,18 +21,26 @@ if(NOT EXISTS "${PX_ENGINE_INCLUDE}/Engine/Native/PxPluginAbi.h")
     message(FATAL_ERROR "PX_ENGINE_INCLUDE (${PX_ENGINE_INCLUDE}) does not contain Engine/Native/PxPluginAbi.h")
 endif()
 
-if(WIN32)
-    set(PX_PLATFORM "win32-x64")
-elseif(APPLE)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(PX_PLATFORM "darwin-arm64")
+# The platform name the manifest uses. Detected, or set with -DPX_PLATFORM=...
+# (CI builds darwin-x64 on an Apple Silicon runner with -DCMAKE_OSX_ARCHITECTURES=x86_64).
+set(PX_PLATFORM "" CACHE STRING "Manifest platform: win32-x64, linux-x64, darwin-x64 or darwin-arm64")
+if(NOT PX_PLATFORM)
+    if(WIN32)
+        set(PX_PLATFORM "win32-x64")
+    elseif(APPLE)
+        if(CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+            set(PX_PLATFORM "darwin-x64")
+        elseif(CMAKE_OSX_ARCHITECTURES MATCHES "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(PX_PLATFORM "darwin-arm64")
+        else()
+            set(PX_PLATFORM "darwin-x64")
+        endif()
     else()
-        set(PX_PLATFORM "darwin-x64")
+        set(PX_PLATFORM "linux-x64")
     endif()
-else()
-    set(PX_PLATFORM "linux-x64")
 endif()
-set(PX_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/../extension/native/${PX_PLATFORM}")
+# $<1:...> keeps multi-config generators (Visual Studio) from adding a Release/ folder.
+set(PX_OUTPUT "$<1:${CMAKE_CURRENT_SOURCE_DIR}/../extension/native/${PX_PLATFORM}>")
 
 add_library(px_live2d SHARED px_live2d_plugin.c cubism_bridge.c)
 target_include_directories(px_live2d PRIVATE "${PX_ENGINE_INCLUDE}")
