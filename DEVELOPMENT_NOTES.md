@@ -36,7 +36,9 @@ awkward at the time), marked here:
 Fixed since, in engine `e16e850` and Studio `7d1b9a3`: item 24 (`validate`
 reports `PXSDKSEM1139`), item 25 (event payloads are objects; `src/frame.ts`
 still accepts the old array for older Players) and item 27 (Studio knows the
-raw and native capabilities). Items 26, 28, 29 and 30 are open.
+raw and native capabilities). Item 29 is fixed in engine `945b089`: `create`
+and every CLI command relink a cross-drive checkout. Items 26, 28 and 30 are
+open.
 
 New in this round:
 

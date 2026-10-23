@@ -24,7 +24,7 @@ env:
   # The engine the extension is built and tested against. @prismatix/cli is not
   # on npm yet, so CI builds it from this commit; bump it deliberately.
   ENGINE_REPOSITORY: PrisX/PrismatiXEngine
-  ENGINE_REF: e16e8506b28e118b353c4bed32b9e4ada1a7ff6e
+  ENGINE_REF: 945b089e07fadcc74acf4e0558e8293f88be576f
   # A draft release is reviewed and published by hand.
   RELEASE_DRAFT: "true"
 
