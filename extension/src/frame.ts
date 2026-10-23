@@ -1,6 +1,6 @@
 // The seconds a frame.update event covers. The documented payload is
-// {delta: "0.016667"}, but the Player at engine commit ae74e2b sends
-// ["delta", "0.016667"] (its C++ builds the payload as an array), so
+// {delta: "0.016667"}, but Players before engine commit e16e850 send
+// ["delta", "0.016667"] (their C++ built the payload as an array), so
 // ctx.frame.onUpdate and raw.onFrame hand every listener 0 and nothing
 // animates. This reads both; see DEVELOPMENT_NOTES item 25.
 

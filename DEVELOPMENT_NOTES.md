@@ -33,6 +33,11 @@ awkward at the time), marked here:
 | 11 mobile and Web | **Fixed for Android** in the next round (below); the Web and iOS still load no native code. |
 | 12-20 | Open (no official test doubles, Player not buildable here, `create` exit code, provenance gate, workspace, Core header, Cubism assumptions); 12, 14 and 15 are answered in the next round. |
 
+Fixed since, in engine `e16e850` and Studio `7d1b9a3`: item 24 (`validate`
+reports `PXSDKSEM1139`), item 25 (event payloads are objects; `src/frame.ts`
+still accepts the old array for older Players) and item 27 (Studio knows the
+raw and native capabilities). Items 26, 28, 29 and 30 are open.
+
 New in this round:
 
 ### 21. A user-supplied companion library has no place in a package: friction (fixed, below)

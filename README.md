@@ -37,7 +37,7 @@ frame.update ── Live2DScene.update ──► parameters (motion, expression,
 Cubism Core in the Windows and Android Players; physics and pose are not
 implemented yet. See "What has been tested" before relying on it.
 
-Needs: PrismatiXEngine commit `ae74e2b` or later (native ABI 1.1, batched raw
+Needs: PrismatiXEngine commit `e16e850` or later (native ABI 1.1, batched raw
 uploads, mask lists, `ctx.random`, `readBytes`, `userFiles`, native
 extensions on Android, Studio sides in `schemaRevision` 2), PrismatiX Studio
 0.1.0 or later for the Studio side, CMake, a C compiler and Node.js 22.18+ for
@@ -339,9 +339,9 @@ ln -s /path/to/PrismatiXEngine extension/.engine
 **Not tested:** macOS, Linux in a Player, a real device (only the emulator),
 and whether masks and blend modes match Cubism's own renderer pixel for pixel.
 
-**Engine workaround.** With PrismatiXEngine `ae74e2b`, `ctx.frame.onUpdate`
-reports 0 seconds every frame (`DEVELOPMENT_NOTES.md` item 25), so `main.ts`
-reads `frame.update` itself; without that nothing would animate.
+**Engine workaround.** Before PrismatiXEngine `e16e850`, `ctx.frame.onUpdate`
+reported 0 seconds every frame (`DEVELOPMENT_NOTES.md` item 25), so `main.ts`
+reads `frame.update` itself and accepts both payload shapes.
 
 ## Licensing
 
