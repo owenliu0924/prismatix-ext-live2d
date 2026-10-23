@@ -1,11 +1,12 @@
 /*
  * The slice of the Cubism Core C API this sample uses, declared here so the
  * bridge builds without Live2D's files. It is NOT Live2D's header: it was
- * written from the public API description, and the bridge loads Core at run
- * time (LoadLibrary / dlopen), so a prototype that differs from the
- * Live2DCubismCore.h of your SDK would compile and then misbehave. Run
- * `cubism_smoke` (native/tools) against your Core and a .moc3 first; it
- * prints what it read and fails loudly on anything implausible.
+ * written from the public API description, then checked against the
+ * Live2DCubismCore.h of the Cubism SDK for Native 5-r.5 (Core 06.00.0001).
+ * The bridge loads Core at run time (LoadLibrary / dlopen), so a prototype
+ * that differs from the header of your SDK would compile and then misbehave.
+ * Run `cubism_smoke` against your Core and a .moc3 first; it prints what it
+ * read and fails loudly on anything implausible.
  *
  * Live2D's Core is proprietary: this sample neither contains nor
  * redistributes it. You supply the library (see the README).
@@ -67,7 +68,7 @@ typedef struct csmVector2 {
     X(const csmFlags*, csmGetDrawableConstantFlags, (const csmModel* model)) \
     X(const csmFlags*, csmGetDrawableDynamicFlags, (const csmModel* model)) \
     X(const int*, csmGetDrawableTextureIndices, (const csmModel* model)) \
-    X(const int*, csmGetDrawableRenderOrders, (const csmModel* model)) \
+\
     X(const float*, csmGetDrawableOpacities, (const csmModel* model)) \
     X(const int*, csmGetDrawableMaskCounts, (const csmModel* model)) \
     X(const int**, csmGetDrawableMasks, (const csmModel* model)) \
@@ -78,10 +79,23 @@ typedef struct csmVector2 {
     X(const unsigned short**, csmGetDrawableIndices, (const csmModel* model)) \
     X(void, csmResetDrawableDynamicFlags, (csmModel* model))
 
+/*
+ * Functions whose name depends on the Core. Render orders: Cores of Cubism
+ * 5.3 and later (moc3 version 6, which adds offscreens) export
+ * csmGetRenderOrders, one entry per drawable and then one per offscreen;
+ * older Cores export csmGetDrawableRenderOrders, one per drawable. Both take
+ * the model and return const int*. csmHasMocConsistency (Core 4.2 and later)
+ * checks a .moc3 before it is revived; without it the bridge skips the check.
+ */
+typedef const int* (*PxCsmRenderOrders)(const csmModel* model);
+typedef int (*PxCsmHasMocConsistency)(void* address, const unsigned int size);
+
 typedef struct CubismCoreApi {
 #define PX_CSM_FIELD(ret, name, args) ret(*name) args;
     PX_CSM_FUNCTIONS(PX_CSM_FIELD)
 #undef PX_CSM_FIELD
+    PxCsmRenderOrders renderOrders;
+    PxCsmHasMocConsistency hasMocConsistency; /* may be NULL */
 } CubismCoreApi;
 
 #ifdef __cplusplus

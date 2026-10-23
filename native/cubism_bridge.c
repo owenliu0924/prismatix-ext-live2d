@@ -153,9 +153,21 @@ int cb_core_load(const char* path, char* error, size_t error_size) {
         return 0;
     }
     const char* name = path && *path ? path : CB_DEFAULT_CORE;
+#if defined(__linux__) && !defined(__ANDROID__)
+    /* The Linux Core calls powf and friends without naming libm as a dependency
+     * (SDK 5-r.5), so libm must already be loaded globally; a host that does not
+     * link it (or loads it RTLD_LOCAL) would fail with "undefined symbol: powf". */
+    (void)dlopen("libm.so.6", RTLD_NOW | RTLD_GLOBAL);
+#endif
     void* library = LibraryOpen(name);
     if (!library) {
-        SetError(error, error_size, "cannot load the Cubism Core library '%s'", name);
+#if defined(_WIN32)
+        SetError(error, error_size, "cannot load the Cubism Core library '%s' (Windows error %lu)", name,
+                 (unsigned long)GetLastError());
+#else
+        const char* reason = dlerror();
+        SetError(error, error_size, "cannot load the Cubism Core library '%s' (%s)", name, reason ? reason : "unknown reason");
+#endif
         return 0;
     }
     CubismCoreApi api;
@@ -172,6 +184,17 @@ int cb_core_load(const char* path, char* error, size_t error_size) {
     } while (0);
     PX_CSM_FUNCTIONS(PX_CSM_RESOLVE)
 #undef PX_CSM_RESOLVE
+    /* See cubism_core_api.h: the render-order function was renamed in Cubism 5.3. */
+    void* render_orders = LibrarySymbol(library, "csmGetRenderOrders");
+    if (!render_orders) render_orders = LibrarySymbol(library, "csmGetDrawableRenderOrders");
+    if (!render_orders) {
+        SetError(error, error_size, "'%s' exports neither csmGetRenderOrders nor csmGetDrawableRenderOrders", name);
+        LibraryClose(library);
+        return 0;
+    }
+    memcpy(&api.renderOrders, &render_orders, sizeof render_orders);
+    void* consistency = LibrarySymbol(library, "csmHasMocConsistency");
+    if (consistency) memcpy(&api.hasMocConsistency, &consistency, sizeof consistency);
     g_core.library = library;
     g_core.api = api;
     g_core.loaded = 1;
@@ -273,6 +296,12 @@ CbModel* cb_model_create(const uint8_t* moc, size_t size, char* error, size_t er
         cb_model_destroy(model);
         return NULL;
     }
+    /* A damaged or hostile .moc3 can crash Core when revived; Core can check it first. */
+    if (api->hasMocConsistency && !api->hasMocConsistency(model->moc_memory, (unsigned int)size)) {
+        SetError(error, error_size, "the .moc3 failed Core's consistency check (damaged or not a .moc3)");
+        cb_model_destroy(model);
+        return NULL;
+    }
     model->moc = api->csmReviveMocInPlace(model->moc_memory, (unsigned int)size);
     if (!model->moc) {
         SetError(error, error_size, "Core refused to revive the .moc3");
@@ -311,7 +340,7 @@ CbModel* cb_model_create(const uint8_t* moc, size_t size, char* error, size_t er
     model->constant_flags = api->csmGetDrawableConstantFlags(m);
     model->dynamic_flags = api->csmGetDrawableDynamicFlags(m);
     model->texture_indices = api->csmGetDrawableTextureIndices(m);
-    model->render_orders = api->csmGetDrawableRenderOrders(m);
+    model->render_orders = api->renderOrders(m);
     model->opacities = api->csmGetDrawableOpacities(m);
     model->mask_counts = api->csmGetDrawableMaskCounts(m);
     model->masks = api->csmGetDrawableMasks(m);

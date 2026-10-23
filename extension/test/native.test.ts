@@ -248,6 +248,20 @@ test("with no path, Core is found beside the plugin (plugin_directory)", {skip},
   assert.ok(log.some((line) => /Cubism Core 0x5000000 loaded/.test(line)));
 });
 
+test("with no path and no Core beside the plugin, the error says where Core goes", {skip}, (context) => {
+  const folder = mkdtempSync(join(tmpdir(), "px-live2d-alone-"));
+  context.after(() => rmSync(folder, {recursive: true, force: true}));
+  const plugin = join(folder, basename(nativeBuild!.plugin));
+  copyFileSync(nativeBuild!.plugin, plugin);
+  const {raw, log, run, state} = setup(context, resources(), binaries(), plugin);
+  run(3, state({haru: spec()}, ""));
+  const errors = log.filter((line) => line.startsWith("error"));
+  assert.equal(errors.length, 1, errors.join("\n"));
+  assert.match(errors[0]!, /Cubism Core was not found: cannot load the Cubism Core library '.*px-live2d-alone-.*' \(.+\); /);
+  assert.match(errors[0]!, /NativeUserFiles\/live2d-cubism\/<platform>\/ .*live2d\.core/);
+  assert.equal(raw.meshes.size, 0);
+});
+
 test("blinking uses the random source the host gives", {skip}, (context) => {
   const files = resources({
     "Assets/Mock/mock.model3.json": JSON.stringify({

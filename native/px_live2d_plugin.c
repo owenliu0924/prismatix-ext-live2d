@@ -79,14 +79,27 @@ static PxStatus CoreLoad(void* user, const uint8_t* request, size_t size, PxResp
     if (size >= sizeof path) return Refuse(response, "the Core path is too long");
     memcpy(path, request, size);
     path[size] = 0;
-    int loaded = 0;
-    if (path[0] == 0 && g_host->plugin_directory) {
-        /* No path given: Core may sit beside this library. */
-        char beside[1024];
-        snprintf(beside, sizeof beside, "%s/%s", g_host->plugin_directory, cb_core_default_name());
-        loaded = cb_core_load(beside, error, sizeof error);
+    if (path[0] != 0) {
+        if (!cb_core_load(path, error, sizeof error)) return Refuse(response, error);
+    } else {
+        /* No path given: Core sits beside this library when pack or run copied it
+         * there from NativeUserFiles/ (userFiles), else on the loader's own path. */
+        char beside_error[512] = "the Player gave no plugin_directory";
+        int loaded = 0;
+        if (g_host->plugin_directory) {
+            char beside[1024];
+            snprintf(beside, sizeof beside, "%s/%s", g_host->plugin_directory, cb_core_default_name());
+            loaded = cb_core_load(beside, beside_error, sizeof beside_error);
+        }
+        if (!loaded && !cb_core_load("", error, sizeof error)) {
+            char message[1400];
+            snprintf(message, sizeof message,
+                     "Cubism Core was not found: %s; %s. Put %s in the project's NativeUserFiles/live2d-cubism/<platform>/ "
+                     "(pack and run copy it beside the plugin), or pass its path with live2d.core",
+                     beside_error, error, cb_core_default_name());
+            return Refuse(response, message);
+        }
     }
-    if (!loaded && !cb_core_load(path, error, sizeof error)) return Refuse(response, error);
     char json[64];
     snprintf(json, sizeof json, "{\"coreVersion\":%u}", cb_core_version());
     return g_host->respond(response, (const uint8_t*)json, strlen(json));
