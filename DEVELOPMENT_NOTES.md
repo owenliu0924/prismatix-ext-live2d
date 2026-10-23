@@ -22,7 +22,7 @@ awkward at the time), marked here:
 | --- | --- |
 | 1 no binary resource read | **Fixed**: `ctx.assets.readBytes`. The `.b64` step and `base64.ts` are gone. |
 | 2 handler fails with a bare status | **Fixed**: `respond_error` (ABI 1.1); the status word in the wire format is gone. |
-| 3 no paths for a plugin | **Fixed**: `plugin_directory`; Core is looked up beside the plugin. See item 21. |
+| 3 no paths for a plugin | **Fixed**: `plugin_directory`; Core is looked up beside the plugin, where `userFiles` now puts it (item 21). |
 | 4 upload budget, order of vertices and indices | **Fixed**: `raw.upload([...])` is one upload for any number of meshes, and the rule is documented. The deferral code is gone. |
 | 5 masks | **Fixed**: `mask` takes a list (up to 16, united) and `maskInverted` exists. The union-mesh workaround is gone. Masks inside render targets are still unsupported. |
 | 6 does an invisible mask still mask | **Documented** ("an invisible mesh still masks"). |
@@ -30,12 +30,12 @@ awkward at the time), marked here:
 | 8 per-vertex work | **Documented** in the raw guide ("where the math goes"). |
 | 9 journal of `native.request` in commands | **Documented**; the extension already did what the guide now says. |
 | 10 no `TextEncoder`/`atob`/`Math.random` | **Partly fixed**: `ctx.random`, `@prismatix/runtime/text`. The extension keeps a small UTF-8 codec of its own so its pure modules run in plain Node (the SDK is not on npm). |
-| 11 mobile and Web | Open. |
-| 12-20 | Open (no official test doubles, Player not buildable here, `create` exit code, provenance gate, workspace, Core header, Cubism assumptions). |
+| 11 mobile and Web | **Fixed for Android** in the next round (below); the Web and iOS still load no native code. |
+| 12-20 | Open (no official test doubles, Player not buildable here, `create` exit code, provenance gate, workspace, Core header, Cubism assumptions); 12, 14 and 15 are answered in the next round. |
 
 New in this round:
 
-### 21. A user-supplied companion library has no place in a package: friction
+### 21. A user-supplied companion library has no place in a package: friction (fixed, below)
 `plugin_directory` lets the plugin find Core beside itself, but a package
 carries only the files its manifest lists with pinned SHA-256s
 (`native.libraries.<platform>.files`), and Core cannot be listed because it
@@ -58,6 +58,83 @@ publish the CLI.
 ### 23. `pack` writes files into the extension's folder: doc
 The first `pack --owner` creates `pxext.json` and `README.md` beside the
 manifest. Fine, but surprising in a repository; this repository commits both.
+
+## Status after engine commit ae74e2b (extension 0.2.0)
+
+This round used `userFiles`, native extensions on Android and Studio sides
+(`schemaRevision` 2), and for the first time ran the extension in real
+Players with Live2D's real Core (Cubism SDK for Native 5-r.5, Core
+06.00.0001) and its sample models.
+
+| Item | Status |
+| --- | --- |
+| 11 mobile | **Fixed for Android.** `libpx_live2d.so` is built with NDK r27 (arm64-v8a, API 26, 16 KB pages); Haru plays with the real arm64 Core on the Android 15 emulator. iOS and the Web still load no native code. |
+| 12 the Player | **Answered.** The Windows Player (a packed game, QA build) and the Android Player both run the extension; Haru idles, plays motions and expressions and moves. |
+| 14 Core's header | **Checked** against `Live2DCubismCore.h` of SDK 5-r.5. One mismatch: `csmGetDrawableRenderOrders` is gone, replaced by `csmGetRenderOrders` (drawables first, then Cubism 5.3 offscreens), so 0.1.0 could not load a current Core at all. The bridge takes whichever the Core exports. Every other prototype, flag and alignment matched. The bridge now also calls `csmHasMocConsistency` (when exported) before reviving a `.moc3`. `cubism_smoke` passes on all eight sample models (moc3 versions 1, 3, 5 and 6) on Windows and Linux. |
+| 15 Cubism assumptions | **Canvas origin: right** (the model stands upright, feet where `x`, `y` say). **Linux:** the SDK does ship `Core/dll/linux/x86_64/libLive2DCubismCore.so`, but it needs libm loaded first (item 28). Whether a mask drawable's own opacity counts: not checked yet. |
+| 21 user-supplied companion library | **Fixed**: Core is a `userFiles` entry per platform; `pack` and `run` copy it from `NativeUserFiles/live2d-cubism/<platform>/` into `Plugins/live2d-cubism/`. A game no longer packs without Core for its platform (`PXCLIEXT1106` names the file and the hint). |
+
+New in this round:
+
+### 24. `resourceFilter` on a string parameter: validate accepts it, the Player refuses the manifest: blocker (fixed here)
+0.1.0 had `"resourceFilter": "model3.json"` on `live2d.show`'s `model`, a
+`string`. `prismatix validate`, `pack` and Studio accept that on a command
+parameter, but the Player's `CommandRegistry` refuses it (`PXSCHEMA7017`
+"Resource filter requires a resource parameter"), so the whole extension
+failed to load (`PXPLAYER5005`, the game does not start). 0.1.0 never loaded
+in a real Player. 0.2.0 drops the filter, and a unit test keeps it out.
+*Fix idea:* the SDK's semantic check should report it for commands as it
+already does for Actions (`PXSDKSEM1118`).
+
+### 25. `frame.update` hands listeners 0 seconds: blocker (worked around here)
+`AdvanceScriptFrame` (`Engine/Script/ScriptFrameScheduler.cpp`) emits
+`{{"delta", std::to_string(deltaSeconds)}}`, which builds a `Variant` array,
+so the payload a script gets is `["delta", "0.016299"]`, not
+`{delta: "0.016299"}`. `ctx.frame.onUpdate` and `raw.onFrame` read
+`payload.delta`, find nothing and report 0 every frame: no motion, blink or
+breath ever advanced in the Player, while the tests (which pass `{delta}`)
+were green. `main.ts` now listens with `ctx.events.on("frame.update")` and
+`src/frame.ts` reads both shapes. *Fix:* build the payload as a
+`VariantObject` and add a Player-side test that a listener gets a positive
+`delta`; the workaround can go once the engine is fixed.
+
+### 26. A `resource` parameter changes what the handler receives: friction
+Studio offers a file picker only for `type: "resource"`, and the declarative
+`optionsFrom: {parameter, pointer}` needs a resource sibling. But the Player
+hands a resource parameter to the script as `{id, path}`, not the string
+written, so changing `model` would change `main.ts`, the saved scene state
+and every save. `model` stays a string; a `models` provider lists the
+project's `.model3.json` files instead, and `idle` uses the `motions`
+provider, which reads the command's own `model`. *Fix idea:* a file picker
+for `string` parameters that name a `resourceFilter` the Player accepts, or
+an `editorHint: "resource"` for strings.
+
+### 27. Studio's manifest check does not know `raw.mesh` or `native`: friction (Studio)
+Studio's Extensions workspace shows "2 errors" for this extension: unknown
+capabilities `raw.mesh` and `native` (Studio's
+`src/lib/extensions/manifest.ts` has no `raw.*` or `native` in its capability
+list). The engine's schema has them; the Studio side loads and works anyway.
+
+### 28. The Linux Core does not link libm: friction
+`libLive2DCubismCore.so` (SDK 5-r.5, linux/x86_64) calls `powf` but lists
+only `libc.so.6` as a dependency, so `dlopen` fails with "undefined symbol:
+powf" in a process that has not loaded libm globally (`cubism_smoke` did).
+The bridge loads `libm.so.6` with `RTLD_GLOBAL` before Core on Linux. The
+Android Core lists libm itself.
+
+### 29. A project on another drive than the engine cannot find its pinned CLI: friction (engine)
+`prismatix create` of a project on `D:` with the engine on `C:` writes
+`link:C:/Users/.../packages/cli` into `package.json`, and pnpm makes the
+link relative to the project (a junction to `D:/project/C:/Users/...`), so
+every later command fails with `PXCLI0002` "The project's pinned CLI is
+missing". Scratch projects here live on the engine's drive.
+
+### 30. Pose is not run, and it can show: friction
+`pose3.json` (groups of parts of which one shows at a time, such as Haru's
+two arm poses) is not implemented. Haru's own motions set those part
+opacities, so she looks right once motions run (item 25), but a model whose
+motions do not would show every alternative at once. The inspector says
+"present, not run by this extension yet".
 
 ## Engine / SDK
 

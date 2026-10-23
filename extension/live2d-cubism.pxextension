@@ -3,7 +3,7 @@
   "schemaRevision": 2,
   "language": "typescript",
   "id": "live2d-cubism",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "requiredEngineVersion": ">=0.1.0 <0.2.0",
   "entry": "main.ts",
   "capabilities": [
