@@ -1,6 +1,6 @@
 {
   "format": "PrismatiXExtension",
-  "schemaRevision": 1,
+  "schemaRevision": 2,
   "language": "typescript",
   "id": "live2d-cubism",
   "version": "0.1.0",
@@ -119,7 +119,10 @@
           "type": "string",
           "displayName": "model",
           "description": "Project path of the .model3.json; its .moc3, textures, motions and expressions sit beside it.",
-          "required": true
+          "required": true,
+          "optionsFrom": {
+            "provider": "owenliu0924/live2d-cubism:models"
+          }
         },
         {
           "name": "x",
@@ -173,7 +176,10 @@
           "type": "string",
           "displayName": "idle",
           "description": "Motion group looped while nothing else plays (empty for none).",
-          "default": "Idle"
+          "default": "Idle",
+          "optionsFrom": {
+            "provider": "owenliu0924/live2d-cubism:motions"
+          }
         },
         {
           "name": "breath",
@@ -281,7 +287,10 @@
           "type": "string",
           "displayName": "group",
           "description": "Motion group name, for example TapBody.",
-          "required": true
+          "required": true,
+          "optionsFrom": {
+            "provider": "owenliu0924/live2d-cubism:motions"
+          }
         },
         {
           "name": "index",
@@ -323,7 +332,10 @@
           "type": "string",
           "displayName": "name",
           "description": "",
-          "default": ""
+          "default": "",
+          "optionsFrom": {
+            "provider": "owenliu0924/live2d-cubism:expressions"
+          }
         }
       ]
     },
@@ -347,7 +359,10 @@
           "type": "string",
           "displayName": "param",
           "description": "Parameter id, for example ParamMouthOpenY.",
-          "required": true
+          "required": true,
+          "optionsFrom": {
+            "provider": "owenliu0924/live2d-cubism:parameters"
+          }
         },
         {
           "name": "value",
@@ -366,5 +381,53 @@
       ]
     }
   ],
-  "actions": []
+  "actions": [],
+  "studio": {
+    "entry": "dist/studio.js",
+    "requiredStudioVersion": ">=0.1.0",
+    "permissions": [
+      "project.read"
+    ],
+    "contributes": {
+      "assetTypes": [
+        {
+          "id": "live2d.model",
+          "displayName": "Live2D model",
+          "description": "A Live2D Cubism model: the .model3.json that names its .moc3, textures, motions and expressions.",
+          "patterns": [
+            "*.model3.json"
+          ]
+        }
+      ],
+      "inspectors": [
+        {
+          "assetType": "live2d.model",
+          "displayName": "Live2D model",
+          "description": "The model's files, motions, expressions and parameters, and whether Cubism Core is in NativeUserFiles/."
+        }
+      ],
+      "parameterOptions": [
+        {
+          "id": "models",
+          "displayName": "Live2D models",
+          "description": "The project's .model3.json files."
+        },
+        {
+          "id": "motions",
+          "displayName": "Motion groups",
+          "description": "Motion groups of the model shown with this id (or of every model when that cannot be told)."
+        },
+        {
+          "id": "expressions",
+          "displayName": "Expressions",
+          "description": "Expressions of the model shown with this id (or of every model)."
+        },
+        {
+          "id": "parameters",
+          "displayName": "Parameters",
+          "description": "Parameter ids from the model's cdi3.json, or the ones its motions and expressions use."
+        }
+      ]
+    }
+  }
 }
