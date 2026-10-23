@@ -16,7 +16,8 @@
     "win32-x64",
     "linux-x64",
     "darwin-x64",
-    "darwin-arm64"
+    "darwin-arm64",
+    "android-arm64"
   ],
   "safety": {
     "previewSafe": false,
@@ -34,16 +35,49 @@
     ],
     "libraries": {
       "win32-x64": {
-        "path": "native/win32-x64/px_live2d.dll"
+        "path": "native/win32-x64/px_live2d.dll",
+        "userFiles": [
+          {
+            "name": "Live2DCubismCore.dll",
+            "hint": "Live2D's Cubism Core. Download the Cubism SDK for Native from live2d.com; the file is Core/dll/windows/x86_64/Live2DCubismCore.dll. Live2D's license applies: read it before you ship a game with Core."
+          }
+        ]
       },
       "linux-x64": {
-        "path": "native/linux-x64/libpx_live2d.so"
+        "path": "native/linux-x64/libpx_live2d.so",
+        "userFiles": [
+          {
+            "name": "libLive2DCubismCore.so",
+            "hint": "Live2D's Cubism Core. Download the Cubism SDK for Native from live2d.com; the file is Core/dll/linux/x86_64/libLive2DCubismCore.so. Live2D's license applies: read it before you ship a game with Core."
+          }
+        ]
       },
       "darwin-x64": {
-        "path": "native/darwin-x64/libpx_live2d.dylib"
+        "path": "native/darwin-x64/libpx_live2d.dylib",
+        "userFiles": [
+          {
+            "name": "libLive2DCubismCore.dylib",
+            "hint": "Live2D's Cubism Core. Download the Cubism SDK for Native from live2d.com; the file is Core/dll/macos/libLive2DCubismCore.dylib. Live2D's license applies: read it before you ship a game with Core."
+          }
+        ]
       },
       "darwin-arm64": {
-        "path": "native/darwin-arm64/libpx_live2d.dylib"
+        "path": "native/darwin-arm64/libpx_live2d.dylib",
+        "userFiles": [
+          {
+            "name": "libLive2DCubismCore.dylib",
+            "hint": "Live2D's Cubism Core. Download the Cubism SDK for Native from live2d.com; the file is Core/dll/macos/libLive2DCubismCore.dylib. Live2D's license applies: read it before you ship a game with Core."
+          }
+        ]
+      },
+      "android-arm64": {
+        "path": "native/android-arm64/libpx_live2d.so",
+        "userFiles": [
+          {
+            "name": "libLive2DCubismCore.so",
+            "hint": "Live2D's Cubism Core. Download the Cubism SDK for Native from live2d.com; the file is Core/dll/android/arm64-v8a/libLive2DCubismCore.so. Live2D's license applies: read it before you ship a game with Core."
+          }
+        ]
       }
     }
   },
@@ -51,7 +85,7 @@
     {
       "id": "live2d.core",
       "displayName": "Set Cubism Core",
-      "description": "Where Live2D's Cubism Core library is. Leave the path empty to use a copy placed beside the plugin.",
+      "description": "Where Live2D's Cubism Core library is. Leave the path empty to use the Core that pack and run copy beside the plugin from the project's NativeUserFiles/.",
       "category": "Live2D",
       "await": false,
       "rollback": "reversible",
@@ -60,7 +94,7 @@
           "name": "path",
           "type": "string",
           "displayName": "path",
-          "description": "Absolute path of Live2D's Cubism Core library. Empty looks beside the plugin first, then uses the platform's default name.",
+          "description": "Absolute path of Live2D's Cubism Core library, to override the one beside the plugin. Empty looks beside the plugin first, then uses the platform's default name.",
           "default": ""
         }
       ]

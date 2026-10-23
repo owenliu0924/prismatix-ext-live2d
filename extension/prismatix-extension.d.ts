@@ -12,14 +12,14 @@ declare module "@prismatix/runtime" {
   interface ExtensionCommandDeclarations {
     /**
      * Set Cubism Core
-     * Where Live2D's Cubism Core library is. Leave the path empty to use a copy placed beside the plugin.
+     * Where Live2D's Cubism Core library is. Leave the path empty to use the Core that pack and run copy beside the plugin from the project's NativeUserFiles/.
      * Story continues at once (await: false); rollback: reversible.
      */
     "live2d.core": {
       readonly args: {
         /**
          * path
-         * Absolute path of Live2D's Cubism Core library. Empty looks beside the plugin first, then uses the platform's default name.
+         * Absolute path of Live2D's Cubism Core library, to override the one beside the plugin. Empty looks beside the plugin first, then uses the platform's default name.
          * Default: ""
          */
         readonly "path": string;

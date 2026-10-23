@@ -1,6 +1,11 @@
 # Builds the Live2D Cubism native extension for the platform you run on:
 #   cmake -S native -B build
 #   cmake --build build
+# or for Android (arm64-v8a, API 26) with the NDK's toolchain file:
+#   cmake -S native -B build-android -G Ninja -DCMAKE_BUILD_TYPE=Release \
+#     -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+#     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26
+#   cmake --build build-android --target px_live2d
 # The libraries land in extension/native/<platform>/ where the manifest expects them.
 cmake_minimum_required(VERSION 3.21)
 project(px_live2d C)
@@ -23,9 +28,14 @@ endif()
 
 # The platform name the manifest uses. Detected, or set with -DPX_PLATFORM=...
 # (CI builds darwin-x64 on an Apple Silicon runner with -DCMAKE_OSX_ARCHITECTURES=x86_64).
-set(PX_PLATFORM "" CACHE STRING "Manifest platform: win32-x64, linux-x64, darwin-x64 or darwin-arm64")
+set(PX_PLATFORM "" CACHE STRING "Manifest platform: win32-x64, linux-x64, darwin-x64, darwin-arm64 or android-arm64")
 if(NOT PX_PLATFORM)
-    if(WIN32)
+    if(ANDROID)
+        if(NOT ANDROID_ABI STREQUAL "arm64-v8a")
+            message(FATAL_ERROR "The Android Player loads arm64-v8a libraries only; set -DANDROID_ABI=arm64-v8a")
+        endif()
+        set(PX_PLATFORM "android-arm64")
+    elseif(WIN32)
         set(PX_PLATFORM "win32-x64")
     elseif(APPLE)
         if(CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
@@ -54,6 +64,12 @@ set_target_properties(px_live2d PROPERTIES
     PREFIX "lib")
 if(WIN32)
     set_target_properties(px_live2d PROPERTIES PREFIX "")
+endif()
+if(ANDROID)
+    # 16 KB pages: Google Play requires it for Android 15 targets. The plugin is
+    # C only, so there is no C++ runtime to link. The NDK compiles with -g even
+    # for Release, and nothing strips a library a .pxext carries, so strip it here.
+    target_link_options(px_live2d PRIVATE "-Wl,-z,max-page-size=16384" "$<$<CONFIG:Release>:-Wl,--strip-debug>")
 endif()
 if(MSVC)
     target_compile_options(px_live2d PRIVATE /W4)
