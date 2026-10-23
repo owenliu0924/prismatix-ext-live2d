@@ -12,14 +12,14 @@ declare module "@prismatix/runtime" {
   interface ExtensionCommandDeclarations {
     /**
      * Set Cubism Core
-     * Where Live2D's Cubism Core library is. Empty uses the platform default name (see the README).
+     * Where Live2D's Cubism Core library is. Leave the path empty to use a copy placed beside the plugin.
      * Story continues at once (await: false); rollback: reversible.
      */
     "live2d.core": {
       readonly args: {
         /**
          * path
-         * Absolute path, or a library name the OS can find.
+         * Absolute path of Live2D's Cubism Core library. Empty looks beside the plugin first, then uses the platform's default name.
          * Default: ""
          */
         readonly "path": string;
@@ -41,7 +41,7 @@ declare module "@prismatix/runtime" {
         readonly "id": string;
         /**
          * model
-         * Project path of the .model3.json (its .moc3 as <moc>.b64 beside it).
+         * Project path of the .model3.json; its .moc3, textures, motions and expressions sit beside it.
          */
         readonly "model": string;
         /**

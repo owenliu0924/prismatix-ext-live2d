@@ -12,10 +12,12 @@
  *
  * Request frame (stdin):  u32 nameLength | name | u32 requestLength | request
  * Response frame (stdout): u32 pxStatus | u32 responseLength | response
+ * (after a failure the response is respond_error's message)
  * End of input shuts the plugin down.
  */
 #include "Engine/Native/PxPluginAbi.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +38,7 @@ struct PxResponse {
     uint8_t* data;
     size_t size;
     int answered;
+    int failed; /* respond_error was used: data is the message */
 };
 
 typedef struct Service {
@@ -70,6 +73,19 @@ static PxStatus Respond(PxResponse* response, const uint8_t* data, size_t size) 
     memcpy(response->data, data, size);
     response->size = size;
     response->answered = 1;
+    return PX_OK;
+}
+
+static PxStatus RespondError(PxResponse* response, const char* message) {
+    if (response->answered) return PX_ERROR_STATE;
+    size_t size = strlen(message);
+    if (size > PX_PLUGIN_MAX_ERROR_MESSAGE) size = PX_PLUGIN_MAX_ERROR_MESSAGE;
+    response->data = (uint8_t*)malloc(size ? size : 1);
+    if (!response->data) return PX_ERROR_FAILED;
+    memcpy(response->data, message, size);
+    response->size = size;
+    response->answered = 1;
+    response->failed = 1;
     return PX_OK;
 }
 
@@ -134,6 +150,17 @@ int main(int argc, char** argv) {
     host.engine_version = "harness";
     host.extension_id = "live2d-cubism";
     host.platform = "harness";
+    char directory[4096] = {0};
+#if !defined(_WIN32)
+    char resolved[4096];
+    if (realpath(argv[1], resolved)) {
+        snprintf(directory, sizeof directory, "%s", resolved);
+        char* slash = strrchr(directory, '/');
+        if (slash) *slash = 0;
+    }
+#endif
+    host.plugin_directory = directory[0] ? directory : NULL;
+    host.respond_error = &RespondError;
     host.register_service = &RegisterService;
     host.respond = &Respond;
     host.post_message = &PostMessage;
@@ -160,7 +187,7 @@ int main(int argc, char** argv) {
             break;
         }
         free(request);
-        const uint32_t statusWord = (uint32_t)status;
+        const uint32_t statusWord = (uint32_t)(response.failed && status == PX_OK ? PX_ERROR_FAILED : status);
         const uint32_t size = (uint32_t)response.size;
         WriteAll(&statusWord, sizeof statusWord);
         WriteAll(&size, sizeof size);

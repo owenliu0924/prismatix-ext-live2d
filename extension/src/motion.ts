@@ -225,29 +225,24 @@ export function applyBreath(parameters: ParameterBank, seconds: number): void {
 }
 
 /**
- * Blinks the model3.json's EyeBlink parameters at irregular intervals. The
- * sandbox has no Math.random (and a saved game must replay), so the intervals
- * come from a small seeded generator.
+ * Blinks the model3.json's EyeBlink parameters at irregular intervals, drawn
+ * from `random` (in the Player, `ctx.random.next`: the engine's saved
+ * generator, since Math.random is disabled in the sandbox).
  */
 export class Blinker {
   private state = 0;
   private clock = 0;
   private next: number;
-  private seed: number;
+  private readonly random: () => number;
   private readonly ids: readonly string[];
   private static readonly CLOSING = 0.1;
   private static readonly CLOSED = 0.05;
   private static readonly OPENING = 0.15;
 
-  constructor(ids: readonly string[], seed: number) {
+  constructor(ids: readonly string[], random: () => number) {
     this.ids = ids;
-    this.seed = seed;
+    this.random = random;
     this.next = this.interval();
-  }
-
-  private random(): number {
-    this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0;
-    return this.seed / 4294967296;
   }
 
   private interval(): number {

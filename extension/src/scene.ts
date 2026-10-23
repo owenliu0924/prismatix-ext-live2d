@@ -4,7 +4,6 @@
 // frame. Commands only edit the state, so a load or rollback needs no special
 // handling: the next frame makes the screen match whatever state came back.
 
-import {decodeBase64} from "./base64.ts";
 import {parseModel3, type Model3} from "./model3.ts";
 import {
   applyBreath, Blinker, ExpressionPlayer, MotionPlayer, parseExpression, parseMotion,
@@ -14,7 +13,7 @@ import {ParameterBank} from "./parameters.ts";
 import {
   decodeCoreLoaded, decodeCreate, decodeUpdate, encodeUpdate, encodeUtf8, type CreatedModel,
 } from "./protocol.ts";
-import {ModelRenderer, type RawLike, type RenderPhaseLike, type UploadBudget} from "./renderer.ts";
+import {ModelRenderer, type RawLike, type RenderPhaseLike} from "./renderer.ts";
 
 export type MotionRequest = {
   readonly group: string;
@@ -52,21 +51,17 @@ export type SceneState = {
 
 export interface SceneHost {
   readText(path: string): string;
+  /** A packaged file's bytes (ctx.assets.readBytes). */
+  readBytes(path: string): Uint8Array;
+  /** A number in [0, 1) from the engine's saved generator (ctx.random.next). */
+  random(): number;
   /** Calls a native service synchronously. */
   native(service: string, payload: Uint8Array): Uint8Array;
   readonly raw: RawLike;
   /** The logical screen size the fractions in `ModelSpec` refer to. */
   logicalSize(): {readonly w: number; readonly h: number};
   readonly log: {info(message: string): void; warn(message: string): void; error(message: string): void};
-  /** Uploads one frame may spend across all models (the Player allows 64). */
-  readonly uploadsPerFrame: number;
   readonly phase: RenderPhaseLike;
-}
-
-function hash(text: string): number {
-  let value = 2166136261;
-  for (let index = 0; index < text.length; index += 1) value = Math.imul(value ^ text.charCodeAt(index), 16777619);
-  return value >>> 0;
 }
 
 /** Mesh ids are letters, digits, dot, dash and underscore. */
@@ -90,22 +85,20 @@ class ModelInstance {
   private expression: ExpressionPlayer | null = null;
   private expressionName = "";
   private clock = 0;
-  private lastTransform = "";
   private readonly warned = new Set<string>();
 
-  constructor(id: string, spec: ModelSpec, host: SceneHost, budget: UploadBudget) {
+  constructor(id: string, spec: ModelSpec, host: SceneHost) {
     this.host = host;
     this.modelPath = spec.model;
     this.model3 = parseModel3(host.readText(spec.model), spec.model);
-    const moc = decodeBase64(host.readText(`${this.model3.moc}.b64`));
-    this.created = decodeCreate(host.native("live2d.model.create", moc));
+    this.created = decodeCreate(host.native("live2d.model.create", host.readBytes(this.model3.moc)));
     const description = this.created.description;
     this.bank = new ParameterBank(description.parameters, description.parts);
-    this.blinker = new Blinker(this.model3.eyeBlinkIds.filter((eye) => this.bank.has(eye)), hash(id));
+    this.blinker = new Blinker(this.model3.eyeBlinkIds.filter((eye) => this.bank.has(eye)), () => host.random());
     this.renderer = new ModelRenderer({
       name: meshPrefix(id), raw: host.raw, description,
       textures: this.model3.textures.map((path) => host.raw.asset(path)),
-      phase: host.phase, order: spec.z * 1000, budget,
+      phase: host.phase, order: spec.z * 1000,
       warn: (message) => host.log.warn(message),
     });
   }
@@ -191,20 +184,21 @@ class ModelInstance {
     }
     for (const [parameter, value] of Object.entries(spec.params)) this.bank.set(parameter, value);
 
-    // Model units to screen: the canvas is spec.height of the screen tall and
-    // stands on (spec.x, spec.y). Model space has y up and its origin at
-    // (ox, oy) of the canvas, measured from the canvas's top-left.
+    // The native side returns vertices in canvas pixels (model units * ppu, y
+    // down from the canvas's top-left; model space has y up and its origin at
+    // (ox, oy)), so these never change; placing the model is a mesh transform.
     const canvas = this.created.description.canvas;
     const screen = this.host.logicalSize();
     const scale = (spec.height * screen.h) / canvas.h;
-    const transform = [canvas.ppu * scale, -canvas.ppu * scale,
-      spec.x * screen.w + (canvas.ox - canvas.w / 2) * scale, spec.y * screen.h - (canvas.h - canvas.oy) * scale] as const;
-    const signature = transform.join(",");
+    this.renderer.setTransform({
+      a: scale, b: 0, c: 0, d: scale,
+      tx: spec.x * screen.w - (canvas.w / 2) * scale,
+      ty: spec.y * screen.h - canvas.h * scale,
+    });
     const request = encodeUpdate({
-      handle: this.created.handle, forceAll: signature !== this.lastTransform, transform,
+      handle: this.created.handle, forceAll: false, transform: [canvas.ppu, -canvas.ppu, canvas.ox, canvas.oy],
       parameters: this.bank.values, partOpacities: this.bank.partValues,
     });
-    this.lastTransform = signature;
     this.renderer.apply(decodeUpdate(this.host.native("live2d.model.update", request), this.created.description));
   }
 
@@ -225,7 +219,6 @@ export class Live2DScene {
   private readonly instances = new Map<string, ModelInstance>();
   /** (id|model) pairs that failed to load, so a bad model is reported once, not every frame. */
   private readonly failed = new Set<string>();
-  private readonly budget: UploadBudget = {remaining: 0};
   private coreLoaded: string | null = null;
   private coreFailed: string | null = null;
 
@@ -254,7 +247,6 @@ export class Live2DScene {
   }
 
   update(deltaSeconds: number, state: SceneState): void {
-    this.budget.remaining = this.host.uploadsPerFrame;
     for (const [id, instance] of this.instances) {
       if (state.models[id]?.model === instance.modelPath) continue;
       instance.dispose();
@@ -269,7 +261,7 @@ export class Live2DScene {
       if (!instance) {
         if (this.failed.has(failure)) continue;
         try {
-          instance = new ModelInstance(id, spec, this.host, this.budget);
+          instance = new ModelInstance(id, spec, this.host);
           this.instances.set(id, instance);
         } catch (error) {
           this.failed.add(failure);

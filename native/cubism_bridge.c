@@ -135,6 +135,8 @@ static int HostIsLittleEndian(void) {
     return *(const uint8_t*)&one == 1;
 }
 
+const char* cb_core_default_name(void) { return CB_DEFAULT_CORE; }
+
 int cb_core_loaded(void) { return g_core.loaded; }
 
 unsigned int cb_core_version(void) { return g_core.loaded ? g_core.api.csmGetVersion() : 0; }

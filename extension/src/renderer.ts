@@ -1,21 +1,20 @@
 // Turns the drawables Core reports into raw meshes.
 //
-// A model has 100-300 drawables, but a raw extension may upload only 64 times
-// a frame (vertices and indices both count), so drawables that are drawn one
-// after another with the same texture, blend mode and mask are merged into one
-// mesh (a "run"). Runs are rebuilt only when what is visible or its order
-// changes; on an ordinary frame a run costs one upload.
+// A model has 100-300 drawables. Drawables that are drawn one after another
+// with the same texture, blend mode and masks are merged into one mesh (a
+// "run"), which keeps the mesh count (and the draw calls) low. Runs are rebuilt
+// only when what is visible or its order changes. Everything that changed in a
+// frame, runs and masks together, goes up in one `raw.upload` batch: one upload
+// call however many meshes, applied all or nothing.
 //
-// The frame budget is shared by every model of the extension (`UploadBudget`).
-// Work that does not fit is finished on the next frames, so a model that
-// appears or reorders may be drawn from a mix of old and new runs for a frame
-// or two instead of failing with PXJS7801.
+// Vertices arrive from the native bridge already in canvas pixels (see
+// cubism_bridge.h), so placing the model on screen is a mesh `transform`:
+// moving, scaling or mirroring it uploads nothing.
 //
-// Masks: a drawable may be clipped by several mask drawables (their union).
-// The raw API masks a mesh with one other mesh, so each distinct set of masks
-// becomes one hidden "union" mesh that holds all of the set's geometry. Masks
-// of one set must share a texture page; later pages are dropped with a warning.
-// Inverted masks are not available in the raw API and are drawn unmasked.
+// Masks: a drawable may be clipped by several mask drawables, or by the
+// inverse of them. Each mask drawable becomes a hidden mesh of its own (with
+// its own texture page) and the clipped runs list them: the Player unites
+// their coverage. A drawable with more than 16 masks keeps the first 16.
 
 import {
   BLEND_ADDITIVE,
@@ -36,6 +35,16 @@ export type TextureSourceLike =
   | {readonly kind: "texture"; readonly id: string}
   | {readonly kind: "target"; readonly id: string};
 
+/** x' = a*x + c*y + tx, y' = b*x + d*y + ty. */
+export interface AffineLike {
+  readonly a: number;
+  readonly b: number;
+  readonly c: number;
+  readonly d: number;
+  readonly tx: number;
+  readonly ty: number;
+}
+
 export interface MeshOptionsLike {
   readonly phase?: RenderPhaseLike;
   readonly order?: number;
@@ -43,26 +52,29 @@ export interface MeshOptionsLike {
   readonly route?: string;
   readonly texture?: TextureSourceLike | null;
   readonly blend?: BlendLike;
-  readonly mask?: string | null;
+  readonly mask?: string | readonly string[] | null;
+  readonly maskInverted?: boolean;
+  readonly transform?: AffineLike | null;
+}
+
+export interface UploadPartLike {
+  readonly mesh: string;
+  readonly vertices?: Float32Array;
+  readonly indices?: Uint16Array | Uint32Array;
 }
 
 export interface MeshLike {
   readonly id: string;
   update(options: MeshOptionsLike): boolean;
-  vertices(data: Float32Array, firstVertex?: number): void;
-  indices(data: Uint16Array | Uint32Array): void;
   destroy(): boolean;
 }
 
 export interface RawLike {
   createMesh(id: string, options?: MeshOptionsLike): MeshLike;
+  /** Uploads to many meshes as one upload call, all or nothing. */
+  upload(parts: readonly UploadPartLike[]): void;
   /** A packaged image as a mesh texture. */
   asset(path: string): TextureSourceLike;
-}
-
-/** Uploads left this frame, shared by every model; the scene refills it each frame. */
-export interface UploadBudget {
-  remaining: number;
 }
 
 export interface RendererOptions {
@@ -76,20 +88,21 @@ export interface RendererOptions {
   /** Meshes of this model draw in [order, order + 1000). */
   readonly order: number;
   readonly route?: string;
-  readonly budget: UploadBudget;
   readonly warn: (message: string) => void;
 }
 
 /** A mesh's vertex limit is 65,536; stay under it so indices fit 16 bits. */
 export const MAX_RUN_VERTICES = 60000;
+/** The Player unites at most this many masks per mesh. */
+export const MAX_MASKS = 16;
+
+const IDENTITY: AffineLike = {a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0};
 
 interface Piece {
   mesh: MeshLike;
-  members: number[];
-  offsets: number[];
   buffer: Float32Array;
   indices: Uint16Array;
-  /** The mesh needs its vertices, indices and options (a new layout). */
+  /** The mesh needs its vertices and indices (a new layout). */
   setup: boolean;
   /** A member has new vertices. */
   stale: boolean;
@@ -97,29 +110,14 @@ interface Piece {
 
 interface Run extends Piece {
   signature: string;
+  members: number[];
+  offsets: number[];
   options: MeshOptionsLike;
 }
 
-interface MaskSet extends Piece {
+interface MaskMesh extends Piece {
+  drawable: number;
   used: boolean;
-}
-
-function concatenate(drawables: ModelDescription["drawables"], indices: ModelDescription["indices"], members: readonly number[]) {
-  const offsets: number[] = [];
-  let vertexTotal = 0, indexTotal = 0;
-  for (const at of members) {
-    offsets.push(vertexTotal * VERTEX_FLOATS);
-    vertexTotal += drawables[at]!.vc;
-    indexTotal += drawables[at]!.ic;
-  }
-  const combined = new Uint16Array(indexTotal);
-  let written = 0, base = 0;
-  for (const at of members) {
-    const source = indices[at]!;
-    for (let k = 0; k < source.length; k += 1) combined[written++] = source[k]! + base;
-    base += drawables[at]!.vc;
-  }
-  return {offsets, buffer: new Float32Array(vertexTotal * VERTEX_FLOATS), indices: combined};
 }
 
 export class ModelRenderer {
@@ -130,14 +128,13 @@ export class ModelRenderer {
   private readonly renderOrders: Int32Array;
   private readonly changed = new Set<number>();
   private readonly runs: Run[] = [];
-  private readonly maskSets = new Map<string, MaskSet>();
-  /** Slot of the run each shown drawable is in, and the mask sets it belongs to. */
+  private readonly masks = new Map<number, MaskMesh>();
+  /** Slot of the run each shown drawable is in. */
   private ownerRun = new Map<number, number>();
-  private ownerMasks = new Map<number, MaskSet[]>();
+  private transform: AffineLike = IDENTITY;
   private structureDirty = true;
-  private maskSerial = 0;
-  private warnedInverted = false;
-  /** Uploads this renderer made in the last `apply` (diagnostics, tests). */
+  private warnedMasks = false;
+  /** Upload calls the last `apply` made: 0 or 1 (diagnostics, tests). */
   uploads = 0;
 
   constructor(options: RendererOptions) {
@@ -148,15 +145,20 @@ export class ModelRenderer {
     this.renderOrders = new Int32Array(this.drawables.length).fill(-1);
   }
 
-  /** True while layout or upload work is waiting for budget. */
-  get pending(): boolean {
-    return this.structureDirty || this.runs.some((run) => run.setup || run.stale) ||
-      [...this.maskSets.values()].some((set) => set.setup || set.stale);
+  /** Where the model's canvas pixels land on screen; changing it uploads nothing. */
+  setTransform(transform: AffineLike): void {
+    if (this.transform.a === transform.a && this.transform.b === transform.b && this.transform.c === transform.c &&
+        this.transform.d === transform.d && this.transform.tx === transform.tx && this.transform.ty === transform.ty) return;
+    this.transform = transform;
+    for (const run of this.runs) {
+      run.options = {...run.options, transform};
+      if (!run.setup) run.mesh.update({transform});
+    }
+    for (const mask of this.masks.values()) mask.mesh.update({transform});
   }
 
-  /** Takes one update from Core, rebuilds what changed and uploads what the budget allows. */
+  /** Takes one update from Core, rebuilds what changed and uploads it. */
   apply(frame: UpdateFrame): void {
-    this.uploads = 0;
     this.changed.clear();
     for (let at = 0; at < this.drawables.length; at += 1) {
       const incoming = frame.vertices[at];
@@ -175,7 +177,8 @@ export class ModelRenderer {
     for (const at of this.changed) {
       const slot = this.ownerRun.get(at);
       if (slot !== undefined && !this.runs[slot]!.setup) this.runs[slot]!.stale = true;
-      for (const set of this.ownerMasks.get(at) ?? []) if (!set.setup) set.stale = true;
+      const mask = this.masks.get(at);
+      if (mask && !mask.setup) mask.stale = true;
     }
     this.flush();
   }
@@ -183,69 +186,85 @@ export class ModelRenderer {
   dispose(): void {
     for (const run of this.runs) run.mesh.destroy();
     this.runs.length = 0;
-    for (const set of this.maskSets.values()) set.mesh.destroy();
-    this.maskSets.clear();
+    for (const mask of this.masks.values()) mask.mesh.destroy();
+    this.masks.clear();
     this.ownerRun.clear();
-    this.ownerMasks.clear();
   }
 
   private blendOf(flags: number): BlendLike {
     return (flags & BLEND_ADDITIVE) !== 0 ? "additive" : (flags & BLEND_MULTIPLICATIVE) !== 0 ? "multiply" : "normal";
   }
 
-  private maskKeyOf(at: number): string {
-    const drawable = this.drawables[at]!;
-    if (drawable.masks.length === 0) return "";
-    if ((drawable.flags & INVERTED_MASK) !== 0) {
-      if (!this.warnedInverted) {
-        this.warnedInverted = true;
-        this.options.warn(`${this.options.name}: ${drawable.id} uses an inverted mask, which raw meshes cannot do; it is drawn unmasked`);
+  /** The drawables that clip drawable `at`, sorted and capped. */
+  private masksOf(at: number): number[] {
+    const wanted = [...this.drawables[at]!.masks].sort((a, b) => a - b);
+    if (wanted.length > MAX_MASKS) {
+      if (!this.warnedMasks) {
+        this.warnedMasks = true;
+        this.options.warn(`${this.options.name}: ${this.drawables[at]!.id} has ${wanted.length} masks; the Player unites ${MAX_MASKS}`);
       }
-      return "";
+      wanted.length = MAX_MASKS;
     }
-    return [...drawable.masks].sort((a, b) => a - b).join(",");
+    return wanted;
   }
 
-  /** Decides which drawables share which mesh; touches the raw API only to create meshes. */
+  /** Decides which drawables share which mesh; touches the raw API only to create and tune meshes. */
   private layout(): void {
     this.structureDirty = false;
     const order: number[] = [];
     for (let at = 0; at < this.drawables.length; at += 1) if (this.shown[at]) order.push(at);
     order.sort((a, b) => this.renderOrders[a]! - this.renderOrders[b]! || a - b);
 
-    const plan: {key: string; maskKey: string; members: number[]; vertices: number}[] = [];
+    const plan: {key: string; masks: number[]; inverted: boolean; members: number[]; vertices: number}[] = [];
     for (const at of order) {
       const drawable = this.drawables[at]!;
-      const maskKey = this.maskKeyOf(at);
-      const key = `${drawable.texture}|${this.blendOf(drawable.flags)}|${maskKey}`;
+      const masks = this.masksOf(at);
+      const inverted = masks.length > 0 && (drawable.flags & INVERTED_MASK) !== 0;
+      const key = `${drawable.texture}|${this.blendOf(drawable.flags)}|${masks.join(",")}|${inverted ? "i" : ""}`;
       const last = plan[plan.length - 1];
       if (last && last.key === key && last.vertices + drawable.vc <= MAX_RUN_VERTICES) {
         last.members.push(at);
         last.vertices += drawable.vc;
       } else {
-        plan.push({key, maskKey, members: [at], vertices: drawable.vc});
+        plan.push({key, masks, inverted, members: [at], vertices: drawable.vc});
       }
     }
 
-    for (const set of this.maskSets.values()) set.used = false;
+    for (const mask of this.masks.values()) mask.used = false;
     this.ownerRun = new Map();
     plan.forEach((entry, slot) => {
       for (const at of entry.members) this.ownerRun.set(at, slot);
-      const maskId = entry.maskKey === "" ? null : this.ensureMaskSet(entry.maskKey);
+      const maskIds = entry.masks.map((at) => this.ensureMask(at));
       const signature = `${entry.key}:${entry.members.join(",")}`;
       const existing = this.runs[slot];
       if (existing && existing.signature === signature) return;
+
       const first = this.drawables[entry.members[0]!]!;
-      const built = concatenate(this.drawables, this.options.description.indices, entry.members);
+      const offsets: number[] = [];
+      let vertexTotal = 0, indexTotal = 0;
+      for (const at of entry.members) {
+        offsets.push(vertexTotal * VERTEX_FLOATS);
+        vertexTotal += this.drawables[at]!.vc;
+        indexTotal += this.drawables[at]!.ic;
+      }
+      const indices = new Uint16Array(indexTotal);
+      let written = 0, base = 0;
+      for (const at of entry.members) {
+        const source = this.options.description.indices[at]!;
+        for (let k = 0; k < source.length; k += 1) indices[written++] = source[k]! + base;
+        base += this.drawables[at]!.vc;
+      }
       const mesh = existing?.mesh ?? this.options.raw.createMesh(`${this.options.name}.run${slot}`, {
         phase: this.options.phase, visible: false,
         ...(this.options.route === undefined ? {} : {route: this.options.route}),
       });
       this.runs[slot] = {
-        mesh, signature, members: entry.members, ...built, setup: true, stale: false,
+        mesh, signature, members: entry.members, offsets, buffer: new Float32Array(vertexTotal * VERTEX_FLOATS), indices,
+        setup: true, stale: false,
         options: {
           visible: true, order: this.options.order + slot,
-          texture: this.options.textures[first.texture] ?? null, blend: this.blendOf(first.flags), mask: maskId,
+          texture: this.options.textures[first.texture] ?? null, blend: this.blendOf(first.flags),
+          mask: maskIds.length === 0 ? null : maskIds, maskInverted: entry.inverted, transform: this.transform,
         },
       };
     });
@@ -256,86 +275,57 @@ export class ModelRenderer {
       stale.members = [];
       stale.setup = stale.stale = false;
     }
-
-    this.ownerMasks = new Map();
-    for (const [key, set] of this.maskSets) {
-      if (!set.used) {
-        set.mesh.destroy();
-        this.maskSets.delete(key);
-        continue;
-      }
-      for (const at of set.members) this.ownerMasks.set(at, [...(this.ownerMasks.get(at) ?? []), set]);
+    for (const [at, mask] of this.masks) {
+      if (mask.used) continue;
+      mask.mesh.destroy();
+      this.masks.delete(at);
     }
   }
 
-  /** The id of the hidden union mesh for a set of mask drawables, creating it when new. */
-  private ensureMaskSet(key: string): string {
-    let set = this.maskSets.get(key);
-    if (!set) {
-      const wanted = key.split(",").map(Number);
-      const texture = this.drawables[wanted[0]!]!.texture;
-      const members = wanted.filter((at) => this.drawables[at]!.texture === texture);
-      if (members.length < wanted.length)
-        this.options.warn(`${this.options.name}: masks of one drawable use more than one texture page; only page ${texture} clips`);
-      const built = concatenate(this.drawables, this.options.description.indices, members);
-      const mesh = this.options.raw.createMesh(`${this.options.name}.mask${this.maskSerial++}`, {
-        phase: this.options.phase, visible: false, texture: this.options.textures[texture] ?? null, blend: "normal",
-        ...(this.options.route === undefined ? {} : {route: this.options.route}),
+  /** The id of the hidden mesh that carries mask drawable `at`, creating it when new. */
+  private ensureMask(at: number): string {
+    let mask = this.masks.get(at);
+    if (!mask) {
+      const drawable = this.drawables[at]!;
+      const mesh = this.options.raw.createMesh(`${this.options.name}.mask${at}`, {
+        phase: this.options.phase, visible: false, texture: this.options.textures[drawable.texture] ?? null, blend: "normal",
+        transform: this.transform, ...(this.options.route === undefined ? {} : {route: this.options.route}),
       });
-      set = {mesh, members, ...built, setup: true, stale: false, used: true};
-      this.maskSets.set(key, set);
+      mask = {mesh, drawable: at, buffer: new Float32Array(drawable.vc * VERTEX_FLOATS), indices: this.options.description.indices[at]!,
+        setup: true, stale: false, used: true};
+      this.masks.set(at, mask);
     }
-    set.used = true;
-    return set.mesh.id;
+    mask.used = true;
+    return mask.mesh.id;
   }
 
-  /** Copies every member: an update deferred by the budget may span several frames of changes. */
-  private fill(piece: Piece, forceOpaque: boolean): void {
-    piece.members.forEach((at, slot) => {
-      const start = piece.offsets[slot]!;
-      piece.buffer.set(this.vertexData[at]!, start);
-      // Coverage of a mask is its texture alone, whatever the drawable's own opacity.
-      if (forceOpaque)
-        for (let k = start + 7, end = start + this.drawables[at]!.vc * VERTEX_FLOATS; k < end; k += VERTEX_FLOATS) piece.buffer[k] = 1;
-    });
+  /** Coverage of a mask is its texture alone, whatever the drawable's own opacity. */
+  private fillMask(mask: MaskMesh): void {
+    mask.buffer.set(this.vertexData[mask.drawable]!);
+    for (let k = 7; k < mask.buffer.length; k += VERTEX_FLOATS) mask.buffer[k] = 1;
   }
 
-  private spend(cost: number): boolean {
-    if (this.options.budget.remaining < cost) return false;
-    this.options.budget.remaining -= cost;
-    this.uploads += cost;
-    return true;
-  }
-
-  /** Vertices go first: the Player rejects indices past the mesh's vertices. */
+  /** One batch for everything that changed. Flags clear only after the Player accepted it. */
   private flush(): void {
-    for (const set of this.maskSets.values()) {
-      if (set.setup) {
-        if (!this.spend(2)) continue;
-        this.fill(set, true);
-        set.mesh.vertices(set.buffer);
-        set.mesh.indices(set.indices);
-        set.setup = set.stale = false;
-      } else if (set.stale && this.spend(1)) {
-        this.fill(set, true);
-        set.mesh.vertices(set.buffer);
-        set.stale = false;
-      }
+    this.uploads = 0;
+    const parts: UploadPartLike[] = [];
+    const sent: Piece[] = [];
+    for (const mask of this.masks.values()) {
+      if (!mask.setup && !mask.stale) continue;
+      this.fillMask(mask);
+      parts.push(mask.setup ? {mesh: mask.mesh.id, vertices: mask.buffer, indices: mask.indices} : {mesh: mask.mesh.id, vertices: mask.buffer});
+      sent.push(mask);
     }
     for (const run of this.runs) {
-      if (run.members.length === 0) continue;
-      if (run.setup) {
-        if (!this.spend(2)) continue;
-        this.fill(run, false);
-        run.mesh.vertices(run.buffer);
-        run.mesh.indices(run.indices);
-        run.mesh.update(run.options);
-        run.setup = run.stale = false;
-      } else if (run.stale && this.spend(1)) {
-        this.fill(run, false);
-        run.mesh.vertices(run.buffer);
-        run.stale = false;
-      }
+      if (run.members.length === 0 || (!run.setup && !run.stale)) continue;
+      run.members.forEach((at, slot) => run.buffer.set(this.vertexData[at]!, run.offsets[slot]!));
+      if (run.setup) run.mesh.update(run.options);
+      parts.push(run.setup ? {mesh: run.mesh.id, vertices: run.buffer, indices: run.indices} : {mesh: run.mesh.id, vertices: run.buffer});
+      sent.push(run);
     }
+    if (parts.length === 0) return;
+    this.options.raw.upload(parts);
+    this.uploads = 1;
+    for (const piece of sent) piece.setup = piece.stale = false;
   }
 }

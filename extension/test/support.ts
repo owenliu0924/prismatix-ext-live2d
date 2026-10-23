@@ -8,7 +8,7 @@ import {mkdtempSync, rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 
-import type {MeshLike, MeshOptionsLike, RawLike, TextureSourceLike} from "../src/renderer.ts";
+import type {MeshLike, MeshOptionsLike, RawLike, TextureSourceLike, UploadPartLike} from "../src/renderer.ts";
 
 export const MAX_UPLOADS_PER_FRAME = 64;
 
@@ -28,24 +28,10 @@ export class FakeMesh implements MeshLike {
   }
 
   update(options: MeshOptionsLike): boolean {
+    const masks = options.mask === undefined || options.mask === null ? [] : typeof options.mask === "string" ? [options.mask] : options.mask;
+    if (masks.length > 16) throw new RangeError("PXJS7804: a mesh has at most 16 masks");
     this.options = {...this.options, ...options};
     return true;
-  }
-
-  vertices(data: Float32Array): void {
-    if (data.length % 8 !== 0) throw new TypeError("vertices hold 8 floats each");
-    this.raw.upload();
-    this.vertexCount = data.length / 8;
-    this.vertexData = data.slice();
-    // Like the Player: indices left over from more vertices are dropped.
-    if (this.indexData.some((index) => index >= this.vertexCount)) this.indexData = new Uint16Array(0);
-  }
-
-  indices(data: Uint16Array | Uint32Array): void {
-    if (data.length % 3 !== 0) throw new TypeError("indices describe triangles");
-    for (const index of data) if (index >= this.vertexCount) throw new RangeError(`PXJS7802: index ${index} is past the mesh's ${this.vertexCount} vertices`);
-    this.raw.upload();
-    this.indexData = Uint16Array.from(data);
   }
 
   destroy(): boolean {
@@ -54,19 +40,21 @@ export class FakeMesh implements MeshLike {
   }
 }
 
+/**
+ * The Player's raw drawing host as far as this extension uses it: meshes you
+ * upload to in batches. A batch counts as one upload, is checked whole before
+ * anything changes (indices against the vertices the mesh will have) and each
+ * mesh may appear once.
+ */
 export class FakeRaw implements RawLike {
   readonly meshes = new Map<string, FakeMesh>();
   uploadsThisFrame = 0;
   maxUploadsInAFrame = 0;
+  /** Makes the next batch fail, to test that nothing is lost. */
+  failNext = false;
 
   beginFrame(): void {
     this.uploadsThisFrame = 0;
-  }
-
-  upload(): void {
-    this.uploadsThisFrame += 1;
-    this.maxUploadsInAFrame = Math.max(this.maxUploadsInAFrame, this.uploadsThisFrame);
-    if (this.uploadsThisFrame > MAX_UPLOADS_PER_FRAME) throw new RangeError("PXJS7801: more than 64 uploads in a frame");
   }
 
   createMesh(id: string, options: MeshOptionsLike = {}): MeshLike {
@@ -79,12 +67,50 @@ export class FakeRaw implements RawLike {
     return {kind: "asset", path};
   }
 
+  upload(parts: readonly UploadPartLike[]): void {
+    this.uploadsThisFrame += 1;
+    this.maxUploadsInAFrame = Math.max(this.maxUploadsInAFrame, this.uploadsThisFrame);
+    if (this.uploadsThisFrame > MAX_UPLOADS_PER_FRAME) throw new RangeError("PXJS7801: more than 64 uploads in a frame");
+    if (this.failNext) {
+      this.failNext = false;
+      throw new RangeError("PXJS7801: injected failure");
+    }
+    const seen = new Set<string>();
+    for (const part of parts) {
+      const mesh = this.meshes.get(part.mesh);
+      if (!mesh) throw new RangeError(`PXJS7802: no raw mesh '${part.mesh}'`);
+      if (seen.has(part.mesh)) throw new RangeError(`PXJS7803: mesh '${part.mesh}' appears twice in a batch`);
+      seen.add(part.mesh);
+      if (part.vertices && part.vertices.length % 8 !== 0) throw new TypeError("vertices hold 8 floats each");
+      if (part.indices && part.indices.length % 3 !== 0) throw new TypeError("indices describe triangles");
+      const vertexCount = part.vertices ? part.vertices.length / 8 : mesh.vertexCount;
+      const indices = part.indices ?? (part.vertices && mesh.indexData.some((index) => index >= vertexCount) ? new Uint16Array(0) : mesh.indexData);
+      for (const index of indices) if (index >= vertexCount) throw new RangeError(`PXJS7802: index ${index} is past the mesh's ${vertexCount} vertices`);
+    }
+    for (const part of parts) {
+      const mesh = this.meshes.get(part.mesh)!;
+      if (part.vertices) {
+        mesh.vertexData = part.vertices.slice();
+        mesh.vertexCount = part.vertices.length / 8;
+        if (mesh.indexData.some((index) => index >= mesh.vertexCount)) mesh.indexData = new Uint16Array(0);
+      }
+      if (part.indices) mesh.indexData = Uint16Array.from(part.indices);
+    }
+  }
+
   /** Meshes that draw, in draw order. */
   drawn(): FakeMesh[] {
     return [...this.meshes.values()]
       .filter((mesh) => mesh.options.visible === true && mesh.vertexCount > 0)
       .sort((a, b) => (a.options.order ?? 0) - (b.options.order ?? 0));
   }
+}
+
+/** Where a mesh's vertex `v` lands on screen: its transform applied to its stored position. */
+export function screenPosition(mesh: FakeMesh, v: number): [number, number] {
+  const x = mesh.vertexData[v * 8]!, y = mesh.vertexData[v * 8 + 1]!;
+  const t = mesh.options.transform ?? {a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0};
+  return [t.a * x + t.c * y + t.tx, t.b * x + t.d * y + t.ty];
 }
 
 const here = process.env.LIVE2D_NATIVE_BUILD ?? "";
@@ -142,7 +168,8 @@ export class HarnessNative {
     const status = new DataView(header.buffer, header.byteOffset, 8).getUint32(0, true);
     const length = new DataView(header.buffer, header.byteOffset, 8).getUint32(4, true);
     const body = this.readExactly(length);
-    if (status !== 0) throw new Error(`PXJS7902: the service '${service}' failed (status ${status})`);
+    // respond_error's message is the body of a failed response, like the Player's PXJS7902.
+    if (status !== 0) throw new Error(`PXJS7902: The native service '${service}' failed: ${Buffer.from(body).toString("utf8")}`);
     return body;
   }
 

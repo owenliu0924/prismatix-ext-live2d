@@ -66,12 +66,12 @@ defineCommand("live2d.param", ({id, param, value, release}) => {
 
 const live2d = new Live2DScene({
   readText: (path) => ctx.assets.readText(path),
+  readBytes: (path) => ctx.assets.readBytes(path),
+  random: () => ctx.random.next(),
   native: (service, payload) => native.request(service, payload),
   raw,
   logicalSize: () => ctx.renderer.logicalSize(),
   log: {info: (m) => ctx.log.info(m), warn: (m) => ctx.log.warn(m), error: (m) => ctx.log.error(m)},
-  // The Player allows 64 uploads a frame; keep a few for anything else.
-  uploadsPerFrame: 60,
   phase: "after-stage",
 });
 

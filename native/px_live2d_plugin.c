@@ -4,13 +4,15 @@
  * expressions, draw batching, the meshes); this library only runs Core, which
  * a script cannot.
  *
- *   live2d.core.load      request: UTF-8 path of the Core library (may be empty)
+ *   live2d.core.load      request: UTF-8 path of the Core library (may be empty:
+ *                         Core beside this library, then the platform's default name)
  *   live2d.model.create   request: the .moc3 bytes
  *   live2d.model.update   request: u32 handle + the update request
  *   live2d.model.release  request: u32 handle
  *
- * Every response starts with u32 status: 0 and the payload, or 1 and a UTF-8
- * message. See cubism_bridge.h for the payloads.
+ * A failure is reported with host->respond_error (ABI 1.1), which reaches the
+ * script as the message of the call's PXJS7902 error. See cubism_bridge.h for
+ * the payloads of the successful responses.
  */
 #define PX_PLUGIN_BUILD 1
 #include "Engine/Native/PxPluginAbi.h"
@@ -38,24 +40,11 @@ static PxStatus Respond(PxResponse* response, CbBuffer* body) {
     return status;
 }
 
-/* A status-1 response: the script gets the message instead of a bare failure. */
+/* Fails the request with a message the script sees. */
 static PxStatus Refuse(PxResponse* response, const char* message) {
-    const uint32_t failed = 1;
-    uint8_t* bytes = NULL;
-    const size_t length = strlen(message);
-    bytes = (uint8_t*)malloc(sizeof failed + length);
-    if (!bytes) return PX_ERROR_FAILED;
-    memcpy(bytes, &failed, sizeof failed);
-    memcpy(bytes + sizeof failed, message, length);
-    const PxStatus status = g_host->respond(response, bytes, sizeof failed + length);
-    free(bytes);
     g_host->log(g_host->host, PX_LOG_WARNING, message);
-    return status;
-}
-
-static int BeginOk(CbBuffer* body) {
-    memset(body, 0, sizeof *body);
-    return cb_buffer_append_u32(body, 0);
+    (void)g_host->respond_error(response, message);
+    return PX_ERROR_FAILED;
 }
 
 static uint32_t Register(CbModel* model) {
@@ -90,15 +79,17 @@ static PxStatus CoreLoad(void* user, const uint8_t* request, size_t size, PxResp
     if (size >= sizeof path) return Refuse(response, "the Core path is too long");
     memcpy(path, request, size);
     path[size] = 0;
-    if (!cb_core_load(path, error, sizeof error)) return Refuse(response, error);
-    CbBuffer body = {0};
+    int loaded = 0;
+    if (path[0] == 0 && g_host->plugin_directory) {
+        /* No path given: Core may sit beside this library. */
+        char beside[1024];
+        snprintf(beside, sizeof beside, "%s/%s", g_host->plugin_directory, cb_core_default_name());
+        loaded = cb_core_load(beside, error, sizeof error);
+    }
+    if (!loaded && !cb_core_load(path, error, sizeof error)) return Refuse(response, error);
     char json[64];
     snprintf(json, sizeof json, "{\"coreVersion\":%u}", cb_core_version());
-    if (!BeginOk(&body) || !cb_buffer_append(&body, json, strlen(json))) {
-        cb_buffer_free(&body);
-        return PX_ERROR_FAILED;
-    }
-    return Respond(response, &body);
+    return g_host->respond(response, (const uint8_t*)json, strlen(json));
 }
 
 static PxStatus ModelCreate(void* user, const uint8_t* request, size_t size, PxResponse* response) {
@@ -112,10 +103,6 @@ static PxStatus ModelCreate(void* user, const uint8_t* request, size_t size, PxR
         return Refuse(response, "too many Live2D models are loaded at once");
     }
     CbBuffer body = {0};
-    if (!BeginOk(&body)) {
-        Forget(handle);
-        return PX_ERROR_FAILED;
-    }
     if (!cb_buffer_append_u32(&body, handle) || !cb_model_describe(model, &body, error, sizeof error)) {
         cb_buffer_free(&body);
         Forget(handle);
@@ -133,7 +120,6 @@ static PxStatus ModelUpdate(void* user, const uint8_t* request, size_t size, PxR
     CbModel* model = Lookup(handle);
     if (!model) return Refuse(response, "unknown Live2D model handle");
     CbBuffer body = {0};
-    if (!BeginOk(&body)) return PX_ERROR_FAILED;
     if (!cb_model_update(model, request + sizeof handle, size - sizeof handle, &body, error, sizeof error)) {
         cb_buffer_free(&body);
         return Refuse(response, error[0] ? error : "update failed");
@@ -143,19 +129,20 @@ static PxStatus ModelUpdate(void* user, const uint8_t* request, size_t size, PxR
 
 static PxStatus ModelRelease(void* user, const uint8_t* request, size_t size, PxResponse* response) {
     (void)user;
+    (void)response;
     uint32_t handle = 0;
-    if (size < sizeof handle) return Refuse(response, "release request is too short");
+    if (size < sizeof handle) return PX_ERROR_INVALID_ARGUMENT;
     memcpy(&handle, request, sizeof handle);
     Forget(handle);
-    CbBuffer body = {0};
-    if (!BeginOk(&body)) return PX_ERROR_FAILED;
-    return Respond(response, &body);
+    return PX_OK; /* no respond: an empty response */
 }
 
 PX_PLUGIN_EXPORT uint32_t px_plugin_abi_version(void) { return PX_PLUGIN_ABI_VERSION; }
 
 PX_PLUGIN_EXPORT PxStatus px_plugin_init(const PxHostApi* host) {
-    if (!host || host->abi_version >> 16 != PX_PLUGIN_ABI_MAJOR || host->struct_size < sizeof(PxHostApi))
+    /* respond_error and plugin_directory are ABI 1.1 fields. */
+    if (!host || host->abi_version >> 16 != PX_PLUGIN_ABI_MAJOR || (host->abi_version & 0xFFFFu) < 1u ||
+        host->struct_size < sizeof(PxHostApi))
         return PX_ERROR_ABI;
     g_host = host;
     if (host->register_service(host->host, "live2d.core.load", &CoreLoad, NULL) != PX_OK ||

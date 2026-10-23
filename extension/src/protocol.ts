@@ -1,6 +1,7 @@
 // The bytes the native service speaks. native/cubism_bridge.h is the
 // authoritative description; this is its script-side encoder and decoder.
-// Everything is little-endian.
+// Everything is little-endian. A failure never reaches these functions: the
+// plugin reports it with respond_error and native.request throws.
 
 /** Core's constant flags of a drawable. */
 export const BLEND_ADDITIVE = 1;
@@ -117,31 +118,26 @@ function view(bytes: Uint8Array): DataView {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
-/** Every response starts with u32 status; non-zero is followed by a message. */
-function expectOk(bytes: Uint8Array): void {
-  if (bytes.length < 4) throw new Error("Live2D: the native service answered with fewer than 4 bytes");
-  if (view(bytes).getUint32(0, true) !== 0) throw new Error(`Live2D: ${decodeUtf8(bytes.subarray(4))}`);
-}
-
 /** Typed views need aligned offsets; a response normally starts at 0, a slice may not. */
 function aligned(bytes: Uint8Array): Uint8Array {
   return bytes.byteOffset % 4 === 0 ? bytes : bytes.slice();
 }
 
 export function decodeCoreLoaded(bytes: Uint8Array): number {
-  expectOk(bytes);
-  return (JSON.parse(decodeUtf8(bytes.subarray(4))) as {coreVersion: number}).coreVersion;
+  return (JSON.parse(decodeUtf8(bytes)) as {coreVersion: number}).coreVersion;
 }
 
 export function decodeCreate(bytes: Uint8Array): CreatedModel {
-  expectOk(bytes);
+  if (bytes.length < 8) throw new Error("Live2D: the model description is truncated");
   const data = view(bytes);
-  const handle = data.getUint32(4, true);
-  const jsonLength = data.getUint32(8, true);
-  const json = JSON.parse(decodeUtf8(bytes.subarray(12, 12 + jsonLength))) as Omit<ModelDescription, "indices">;
-  let offset = (12 + jsonLength + 3) & ~3;
+  const handle = data.getUint32(0, true);
+  const jsonLength = data.getUint32(4, true);
+  if (8 + jsonLength > bytes.length) throw new Error("Live2D: the model description is truncated");
+  const json = JSON.parse(decodeUtf8(bytes.subarray(8, 8 + jsonLength))) as Omit<ModelDescription, "indices">;
+  let offset = (8 + jsonLength + 3) & ~3;
   const source = aligned(bytes);
   const indices = json.drawables.map((drawable) => {
+    if (offset + drawable.ic * 2 > source.length) throw new Error("Live2D: the model description is truncated");
     const view16 = new Uint16Array(source.buffer, source.byteOffset + offset, drawable.ic);
     offset += drawable.ic * 2;
     return view16;
@@ -165,13 +161,13 @@ export function encodeUpdate(options: UpdateOptions): Uint8Array {
 }
 
 export function decodeUpdate(bytes: Uint8Array, description: ModelDescription): UpdateFrame {
-  expectOk(bytes);
-  const count = view(bytes).getUint32(4, true);
+  if (bytes.length < 4) throw new Error("Live2D: the update is truncated");
+  const count = view(bytes).getUint32(0, true);
   if (count !== description.drawables.length)
     throw new Error(`Live2D: the update covers ${count} drawables, the model has ${description.drawables.length}`);
   const source = aligned(bytes);
-  const flags = source.subarray(8, 8 + count);
-  let offset = (8 + count + 3) & ~3;
+  const flags = source.subarray(4, 4 + count);
+  let offset = (4 + count + 3) & ~3;
   const renderOrders = new Int32Array(source.buffer, source.byteOffset + offset, count);
   offset += count * 4;
   const vertices = description.drawables.map((drawable, index) => {

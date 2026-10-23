@@ -11,6 +11,53 @@ Severity: **blocker** (needed a workaround that costs something real),
 **friction** (works, but more work than it should be), **doc** (unclear or
 unverified, not necessarily a defect).
 
+## Status after engine commit 2534281
+
+The engine fixed most of the raw and native items below in "feat(extensions):
+batched raw uploads, mask lists, ctx.random, readBytes and native ABI 1.1".
+This extension now uses those features; the items stay as written (what was
+awkward at the time), marked here:
+
+| Item | Status |
+| --- | --- |
+| 1 no binary resource read | **Fixed**: `ctx.assets.readBytes`. The `.b64` step and `base64.ts` are gone. |
+| 2 handler fails with a bare status | **Fixed**: `respond_error` (ABI 1.1); the status word in the wire format is gone. |
+| 3 no paths for a plugin | **Fixed**: `plugin_directory`; Core is looked up beside the plugin. See item 21. |
+| 4 upload budget, order of vertices and indices | **Fixed**: `raw.upload([...])` is one upload for any number of meshes, and the rule is documented. The deferral code is gone. |
+| 5 masks | **Fixed**: `mask` takes a list (up to 16, united) and `maskInverted` exists. The union-mesh workaround is gone. Masks inside render targets are still unsupported. |
+| 6 does an invisible mask still mask | **Documented** ("an invisible mesh still masks"). |
+| 7 mesh `transform` | **Used**: placing the model is a mesh transform and uploads nothing. |
+| 8 per-vertex work | **Documented** in the raw guide ("where the math goes"). |
+| 9 journal of `native.request` in commands | **Documented**; the extension already did what the guide now says. |
+| 10 no `TextEncoder`/`atob`/`Math.random` | **Partly fixed**: `ctx.random`, `@prismatix/runtime/text`. The extension keeps a small UTF-8 codec of its own so its pure modules run in plain Node (the SDK is not on npm). |
+| 11 mobile and Web | Open. |
+| 12-20 | Open (no official test doubles, Player not buildable here, `create` exit code, provenance gate, workspace, Core header, Cubism assumptions). |
+
+New in this round:
+
+### 21. A user-supplied companion library has no place in a package: friction
+`plugin_directory` lets the plugin find Core beside itself, but a package
+carries only the files its manifest lists with pinned SHA-256s
+(`native.libraries.<platform>.files`), and Core cannot be listed because it
+cannot be redistributed. So after `pack`, the user must copy Core into
+`Plugins/live2d-cubism/` of the packed game by hand, and I could not find a
+way for `prismatix pack`/`run` to do it. *Fix idea:* a manifest entry for an
+optional, user-provided file ("`userFiles`": name, platform, expected SHA-256
+or version check, where the CLI says to put it).
+
+### 22. A multi-platform release needs every library on one machine: friction
+`extension pack` signs each platform's library into the main package, so all
+platforms' libraries must be in `extension/native/<platform>/` when it runs;
+a missing one is left out. Building on Windows, macOS and Linux runners and
+packing once needs a CI step that gathers the artifacts, and the CLI is not on
+npm, so that step needs an engine checkout. *Fix idea:* `extension pack
+--add-platform <pack>` to merge a per-OS build into an existing package, and
+publish the CLI.
+
+### 23. `pack` writes files into the extension's folder: doc
+The first `pack --owner` creates `pxext.json` and `README.md` beside the
+manifest. Fine, but surprising in a repository; this repository commits both.
+
 ## Engine / SDK
 
 ### 1. Scripts cannot read binary resources: friction

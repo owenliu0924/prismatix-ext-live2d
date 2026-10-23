@@ -51,7 +51,7 @@
     {
       "id": "live2d.core",
       "displayName": "Set Cubism Core",
-      "description": "Where Live2D's Cubism Core library is. Empty uses the platform default name (see the README).",
+      "description": "Where Live2D's Cubism Core library is. Leave the path empty to use a copy placed beside the plugin.",
       "category": "Live2D",
       "await": false,
       "rollback": "reversible",
@@ -60,7 +60,7 @@
           "name": "path",
           "type": "string",
           "displayName": "path",
-          "description": "Absolute path, or a library name the OS can find.",
+          "description": "Absolute path of Live2D's Cubism Core library. Empty looks beside the plugin first, then uses the platform's default name.",
           "default": ""
         }
       ]
@@ -84,7 +84,7 @@
           "name": "model",
           "type": "string",
           "displayName": "model",
-          "description": "Project path of the .model3.json (its .moc3 as <moc>.b64 beside it).",
+          "description": "Project path of the .model3.json; its .moc3, textures, motions and expressions sit beside it.",
           "required": true,
           "resourceFilter": "model3.json"
         },

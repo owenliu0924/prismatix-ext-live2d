@@ -1,0 +1,17 @@
+{
+  "format": "PrismatiXExtensionPackage",
+  "formatVersion": 1,
+  "id": "owenliu0924/live2d-cubism",
+  "displayName": "Live2D (Cubism)",
+  "description": "Shows Live2D Cubism models: motions, expressions, blink and breath, on raw meshes with a native Core bridge. You supply Live2D's Cubism Core.",
+  "author": {
+    "name": "Owen Liu"
+  },
+  "repository": "https://github.com/owenliu0924/prismatix-ext-live2d",
+  "keywords": [
+    "live2d",
+    "cubism",
+    "character",
+    "native"
+  ]
+}

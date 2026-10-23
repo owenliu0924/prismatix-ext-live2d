@@ -47,6 +47,8 @@ void cb_buffer_free(CbBuffer* buffer);
 int cb_buffer_append(CbBuffer* buffer, const void* bytes, size_t size);
 int cb_buffer_append_u32(CbBuffer* buffer, uint32_t value);
 
+/* The library file name Live2D ships Core as on this platform. */
+const char* cb_core_default_name(void);
 /* Loads Core from `path` (empty or NULL: the platform's default library name). */
 int cb_core_load(const char* path, char* error, size_t error_size);
 int cb_core_loaded(void);
