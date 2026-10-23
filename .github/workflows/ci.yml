@@ -24,7 +24,7 @@ env:
   # The engine the extension is built and tested against. @prismatix/cli is not
   # on npm yet, so CI builds it from this commit; bump it deliberately.
   ENGINE_REPOSITORY: PrisX/PrismatiXEngine
-  ENGINE_REF: 2534281ad1d404630358d6004fc1b705bc1bcaa6
+  ENGINE_REF: ae74e2b1dd5dfdfa05c9ff0b23b4a21ef61a3a66
   # A draft release is reviewed and published by hand.
   RELEASE_DRAFT: "true"
 
@@ -64,6 +64,12 @@ jobs:
         run: |
           ln -s ../engine extension/.engine
           engine/node_modules/.bin/tsc -p extension/tsconfig.check.json
+          engine/node_modules/.bin/tsc -p extension/tsconfig.studio.json
+      - name: The committed Studio bundle and handler types are up to date
+        run: |
+          tools/build-studio.sh engine
+          git diff --exit-code -- extension/dist extension/prismatix-extension.d.ts ||
+            { echo "::error::run tools/build-studio.sh and commit extension/dist/studio.js and extension/prismatix-extension.d.ts"; exit 1; }
 
   native:
     name: native (${{ matrix.platform }})
@@ -93,9 +99,40 @@ jobs:
           path: extension/native/${{ matrix.platform }}
           if-no-files-found: error
 
+  native-android:
+    name: native (android-arm64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the plugin with the NDK (arm64-v8a, API 26, 16 KB pages)
+        run: |
+          ndk="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          [ -n "$ndk" ] && [ -d "$ndk" ] || { echo "::error::no Android NDK on this runner"; exit 1; }
+          echo "NDK: $ndk"
+          cmake -S native -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26
+          cmake --build build --target px_live2d
+      - name: Check the library's architecture, alignment and exports
+        run: |
+          ndk="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          library=extension/native/android-arm64/libpx_live2d.so
+          "$bin/llvm-readelf" -h "$library" | grep -q AArch64
+          if "$bin/llvm-readelf" -lW "$library" | awk '$1 == "LOAD" && $NF != "0x4000" {bad = 1} END {exit !bad}'; then
+            echo "::error::a LOAD segment is not 16 KB aligned"; exit 1
+          fi
+          "$bin/llvm-nm" -D --defined-only "$library" | grep -q px_plugin_init
+          ls -l extension/native/android-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-android-arm64
+          path: extension/native/android-arm64
+          if-no-files-found: error
+
   package:
     name: package (.pxext)
-    needs: [test, engine-checks, native]
+    needs: [test, engine-checks, native, native-android]
     runs-on: ubuntu-22.04
     outputs:
       signed: ${{ steps.key.outputs.signed }}
@@ -187,15 +224,17 @@ jobs:
           cat > notes.md <<NOTES
           Live2D (Cubism) for PrismatiX $version.
 
-          **Install** (needs a PrismatiXEngine with native ABI 1.1; the package for your platform is looked up beside the main file):
+          **Install** (needs a PrismatiXEngine with native ABI 1.1, \`userFiles\` and Android native extensions, PrismatiXEngine $ENGINE_REF or later; the package for your platform is looked up beside the main file; add \`--platform android-arm64\` for an Android build):
 
           \`\`\`sh
           prismatix extension add $base/$main --sha256 $sha --allow-native
           \`\`\`
 
-          **This package contains native code** that runs inside the game process, and **does not contain Live2D's Cubism Core**: download the Cubism SDK for Native from Live2D (read its license) and put the Core library beside the plugin, or pass its path with \`live2d.core\`.
+          **This package contains native code** that runs inside the game process, and **does not contain Live2D's Cubism Core**: download the Cubism SDK for Native from Live2D (read its license) and put the Core library for each platform in your project's \`NativeUserFiles/live2d-cubism/<platform>/\`; \`prismatix pack\` and \`run\` copy it beside the plugin. \`prismatix extension inspect\` lists the file names.
 
-          Native packs are built for Windows, Linux and macOS (Intel and Apple Silicon). CI runs the Linux and Apple Silicon builds against a mock Core; the Windows and Intel macOS builds are compiled but never run. Nothing here has run in a real Player or against a real model yet. See the README.
+          It also has a Studio side (read-only project access): an inspector for \`.model3.json\` files and dropdowns of motions, expressions and parameters. Studio asks before it loads it.
+
+          Native packs are built for Windows, Linux, macOS (Intel and Apple Silicon) and Android (arm64). CI runs the Linux and Apple Silicon builds against a mock Core; the Windows, Intel macOS and Android builds are compiled but not run there. Before release, Live2D's sample models ran with the real Core (SDK 5-r.5) in the Windows and Android Players; macOS has not been tried. See the README.
 
           SHA-256 of every file is in \`SHA256SUMS.txt\`.
           NOTES
