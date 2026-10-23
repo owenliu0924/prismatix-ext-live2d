@@ -3,10 +3,10 @@
   "compilerOptions": {
     "types": [],
     "paths": {
-      "@prismatix/runtime": [".engine/runtime-sdk/dist/src/index.d.ts"],
-      "@prismatix/runtime/raw": [".engine/runtime-sdk/dist/src/raw.d.ts"],
-      "@prismatix/runtime/native": [".engine/runtime-sdk/dist/src/native.d.ts"]
+      "@prismatix/runtime": ["./.engine/runtime-sdk/dist/src/index.d.ts"],
+      "@prismatix/runtime/raw": ["./.engine/runtime-sdk/dist/src/raw.d.ts"],
+      "@prismatix/runtime/native": ["./.engine/runtime-sdk/dist/src/native.d.ts"]
     }
   },
-  "include": ["main.ts", "src/**/*.ts", "prismatix-extension.d.ts", ".engine/runtime-sdk/sandbox.d.ts"]
+  "include": ["main.ts", "src/**/*.ts", "prismatix-extension.d.ts", "./.engine/runtime-sdk/sandbox.d.ts"]
 }
