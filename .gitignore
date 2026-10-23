@@ -1,0 +1,4 @@
+# Built native libraries (cmake -S native writes them here).
+extension/native/
+# A symlink to a PrismatiXEngine checkout, for type-checking (see README).
+extension/.engine
